@@ -93,7 +93,7 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
-        # Determine the sender ID from the neighbors list
+        # Identify the sender ID from the neighbors list
         sender_id = None
         for neighbor_id, info in self.neighbors.items():
             if info['ip'] == sender_ip and info['port'] == sender_port:
@@ -126,6 +126,7 @@ class Router:
                 self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
                 updated = True
 
+        # If the table was updated, propagate the changes
         if updated:
             print(f"Updated routing table: {self.routing_table}")
             self.send_update()
