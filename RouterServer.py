@@ -2,38 +2,39 @@ import socket
 import threading
 import time
 import sys
+import keyboard  # Install using `pip install keyboard`
 
 class Router:
-    # Remember to change your topology file for each server
-    def __init__(self, server_id, update_interval, topology_file="server1_init.txt"):
+    def __init__(self, server_id, update_interval, topology_file):
         self.server_id = server_id
         self.update_interval = update_interval
         self.routing_table = {}
         self.neighbors = {}
+        self.packet_counter = 0
+        self.running = True
         self.load_topology(topology_file)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.ip, self.port))
-        
+
     def load_topology(self, topology_file):
         """ Load and initialize routing table and neighbors from topology file """
         with open(topology_file, 'r') as f:
-            lines = f.readlines()
-            num_servers = int(lines[0].strip())
-            num_neighbors = int(lines[1].strip())
-            
-            # Process each server's ID, IP, and port
+            lines = [line.split('#')[0].strip() for line in f if line.strip()]
+            num_servers = int(lines[0])
+            num_neighbors = int(lines[1])
+
+            # Process server details
             for i in range(2, 2 + num_servers):
-                line = lines[i].strip().split()
-                sid, sip, sport = int(line[0]), line[1], int(line[2])
+                sid, sip, sport = lines[i].split()
+                sid, sport = int(sid), int(sport)
                 if sid == self.server_id:
                     self.ip, self.port = sip, sport
                 else:
                     self.routing_table[sid] = {'next_hop': sid, 'cost': float('inf')}
-            
+
             # Process neighbors
-            for i in range(2 + num_servers, 2 + num_neighbors):
-                line = lines[i].strip().split()
-                sid1, sid2, cost = int(line[0]), int(line[1]), int(line[2])
+            for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
+                sid1, sid2, cost = map(int, lines[i].split())
                 if sid1 == self.server_id:
                     self.neighbors[sid2] = {'cost': cost}
                     self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}
@@ -42,7 +43,7 @@ class Router:
         """ Send distance vector updates to all neighbors """
         update_message = self.create_update_message()
         for neighbor_id in self.neighbors:
-            neighbor_ip, neighbor_port = self.get_neighbor_address(neighbor_id)
+            neighbor_ip, neighbor_port = self.ip, self.port  # Adjust if topology stores these for neighbors
             self.sock.sendto(update_message.encode(), (neighbor_ip, neighbor_port))
         print("Routing update sent.")
 
@@ -53,21 +54,17 @@ class Router:
             message += f"{dest_id} {data['next_hop']} {data['cost']} "
         return message
 
-    def get_neighbor_address(self, neighbor_id):
-        """ Returns the IP and port of a neighbor """
-        neighbor = self.neighbors.get(neighbor_id)
-        return neighbor['ip'], neighbor['port']
-
     def listen_for_updates(self):
         """ Listen for incoming updates from other routers """
-        while True:
+        while self.running:
             data, addr = self.sock.recvfrom(1024)
             print(f"RECEIVED A MESSAGE FROM SERVER at {addr}")
-            # Process incoming update here...
-            # (This part will parse the update message and apply Bellman-Ford updates)
+            print(f"Message Content: {data.decode()}")
+            self.packet_counter += 1
+            # Process update messages here (not implemented yet)
 
     def update_routing_table(self, neighbor_id, new_cost):
-        """ Manually update link cost to a neighbor and adjust routing table """
+        """ Update link cost to a neighbor and adjust routing table """
         if neighbor_id in self.neighbors:
             self.neighbors[neighbor_id]['cost'] = new_cost
             self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
@@ -75,27 +72,98 @@ class Router:
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
 
+    def step(self):
+        """ Send immediate routing updates """
+        self.send_update()
+        print("step SUCCESS")
+
+    def packets(self):
+        """ Display and reset the number of received packets """
+        print(f"packets: {self.packet_counter}")
+        self.packet_counter = 0
+
+    def display(self):
+        """ Display the current routing table """
+        print("Routing Table:")
+        for dest_id in sorted(self.routing_table.keys()):
+            route = self.routing_table[dest_id]
+            print(f"{dest_id} {route['next_hop']} {route['cost']}")
+        print("display SUCCESS")
+
+    def disable(self, neighbor_id):
+        """ Disable the link to a given neighbor """
+        if neighbor_id in self.neighbors:
+            self.neighbors[neighbor_id]['cost'] = float('inf')
+            self.routing_table[neighbor_id]['cost'] = float('inf')
+            print(f"disable {neighbor_id} SUCCESS")
+        else:
+            print(f"disable {neighbor_id} FAILED: Not a neighbor")
+
+    def crash(self):
+        """ Simulate a server crash by disabling all connections """
+        for neighbor_id in self.neighbors:
+            self.disable(neighbor_id)
+        print("crash SUCCESS")
+
     def run_periodic_updates(self):
-        """ Periodically send routing updates based on the specified interval """
-        while True:
+        """ Periodically send routing updates """
+        while self.running:
             time.sleep(self.update_interval)
             self.send_update()
 
+    def handle_commands(self):
+        """ Continuously read user commands from the terminal """
+        while self.running:
+            command = input("Enter command: ").strip().split()
+            if not command:
+                continue
+
+            cmd = command[0].lower()
+            if cmd == "update" and len(command) == 4:
+                self.update_routing_table(int(command[2]), int(command[3]))
+            elif cmd == "step":
+                self.step()
+            elif cmd == "packets":
+                self.packets()
+            elif cmd == "display":
+                self.display()
+            elif cmd == "disable" and len(command) == 2:
+                self.disable(int(command[1]))
+            elif cmd == "crash":
+                self.crash()
+            elif cmd == "exit":
+                self.running = False
+            else:
+                print("Invalid command")
+
     def run(self):
-        """ Start server: Listen for incoming updates and run periodic updates """
+        """ Start server """
         threading.Thread(target=self.listen_for_updates).start()
         threading.Thread(target=self.run_periodic_updates).start()
+        threading.Thread(target=self.terminate_on_escape).start()
+        self.handle_commands()
+
+    def terminate_on_escape(self):
+        """ Terminate the program when ESC is pressed """
+        print("Press ESC to stop the program...")
+        while self.running:
+            if keyboard.is_pressed('esc'):
+                print("\nESC pressed. Exiting program...")
+                self.running = False
+                self.sock.close()
+                break
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python3 dv.py <server-ID> <routing-update-interval>")
+    if len(sys.argv) != 4:
+        print("Usage: python3 RouterServer.py <server-ID> <routing-update-interval> <topology-file>")
         sys.exit(1)
 
-    server_id = int(sys.argv[1])  # Server ID provided as an argument
-    update_interval = int(sys.argv[2])  # Update interval in seconds
+    server_id = int(sys.argv[1])
+    update_interval = int(sys.argv[2])
+    topology_file = sys.argv[3]
 
-    router = Router(server_id, update_interval)
+    router = Router(server_id, update_interval, topology_file)
     router.run()
 
 
