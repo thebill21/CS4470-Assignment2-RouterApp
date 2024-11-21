@@ -18,11 +18,10 @@ class Router:
     def load_topology(self, topology_file):
         """ Load and initialize routing table and neighbors from topology file """
         with open(topology_file, 'r') as f:
-            lines = [line.split('#')[0].strip() for line in f if line.strip()]  # Remove comments and blank lines
+            lines = [line.split('#')[0].strip() for line in f if line.strip()]
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
-            # Process server details
             for i in range(2, 2 + num_servers):
                 sid, sip, sport = lines[i].split()
                 sid, sport = int(sid), int(sport)
@@ -31,7 +30,6 @@ class Router:
                 else:
                     self.routing_table[sid] = {'next_hop': sid, 'cost': float('inf')}
 
-            # Process neighbors
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 sid1, sid2, cost = map(int, lines[i].split())
                 if sid1 == self.server_id:
@@ -43,9 +41,8 @@ class Router:
                             break
                     if neighbor_ip and neighbor_port:
                         self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
-                        self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}  # Initialize routing table
+                        self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}
 
-            # Debug output
             print(f"Server {self.server_id} neighbors: {self.neighbors}")
             print(f"Server {self.server_id} routing table: {self.routing_table}")
 
@@ -94,7 +91,7 @@ class Router:
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Update the routing table only if the new cost is lower
+            # Update the routing table with the new cost
             if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
                 print(f"Updated routing table: {self.routing_table}")
@@ -102,12 +99,10 @@ class Router:
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
         if neighbor_id in self.neighbors:
-            self.neighbors[neighbor_id]['cost'] = new_cost  # Update neighbor cost
-            self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}  # Update routing table
+            self.neighbors[neighbor_id]['cost'] = new_cost
+            self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
             print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
             print(f"Updated routing table: {self.routing_table}")
-
-            # Propagate the update immediately
             self.send_update()
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
