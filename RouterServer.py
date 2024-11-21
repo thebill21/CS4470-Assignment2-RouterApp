@@ -100,7 +100,7 @@ class Router:
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Ignore self-updates
+            # Ignore self-updates (self-loop)
             if dest_id == self.server_id:
                 continue
 
@@ -109,8 +109,10 @@ class Router:
                 if self.routing_table[dest_id]['cost'] != cost:
                     self.routing_table[dest_id] = {'next_hop': dest_id, 'cost': cost}
                     updated = True
-            # Update routing table if the new cost is lower (indirect routes)
-            elif dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
+                continue
+
+            # Update routing table if the new cost is lower
+            if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
                 updated = True
 
