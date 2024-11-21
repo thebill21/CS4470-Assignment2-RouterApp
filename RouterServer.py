@@ -100,6 +100,10 @@ class Router:
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
+            # Ignore self-updates
+            if dest_id == self.server_id:
+                continue
+
             # Direct neighbor updates always take precedence
             if dest_id in self.neighbors and next_hop == self.server_id:
                 if self.routing_table[dest_id]['cost'] != cost:
