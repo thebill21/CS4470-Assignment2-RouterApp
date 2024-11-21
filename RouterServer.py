@@ -102,10 +102,10 @@ class Router:
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
         if neighbor_id in self.neighbors:
-            self.neighbors[neighbor_id]['cost'] = new_cost
-            self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
+            self.neighbors[neighbor_id]['cost'] = new_cost  # Update neighbor cost
+            self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}  # Update routing table
             print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
-            print(f"Routing table after update: {self.routing_table}")
+            print(f"Updated routing table: {self.routing_table}")
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
 
