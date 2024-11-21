@@ -85,16 +85,25 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
+        updated = False
         for i in range(num_entries):
             idx = 3 + i * 3
             dest_id = int(parts[idx])
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Update the routing table with the new cost
-            if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
+            # Update the routing table even if the cost is the same (direct neighbors)
+            if dest_id in self.neighbors and next_hop == self.server_id:
+                if self.routing_table[dest_id]['cost'] != cost:
+                    self.routing_table[dest_id]['cost'] = cost
+                    updated = True
+            elif dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
-                print(f"Updated routing table: {self.routing_table}")
+                updated = True
+
+        if updated:
+            print(f"Updated routing table: {self.routing_table}")
+            self.send_update()
 
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
