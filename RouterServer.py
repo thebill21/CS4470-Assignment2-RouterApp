@@ -2,7 +2,6 @@ import socket
 import threading
 import time
 import sys
-import keyboard  # Install using `pip install keyboard`
 
 class Router:
     def __init__(self, server_id, update_interval, topology_file):
@@ -33,19 +32,28 @@ class Router:
                     self.routing_table[sid] = {'next_hop': sid, 'cost': float('inf')}
 
             # Process neighbors
-            for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
+            for i in range(2 + num_servers, 2 + num_neighbors):
                 sid1, sid2, cost = map(int, lines[i].split())
                 if sid1 == self.server_id:
-                    self.neighbors[sid2] = {'cost': cost}
-                    self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}
+                    neighbor_ip, neighbor_port = None, None
+                    for line in lines[2:2 + num_servers]:
+                        sid, sip, sport = line.split()
+                        if int(sid) == sid2:
+                            neighbor_ip, neighbor_port = sip, int(sport)
+                            break
+                    self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
+
+            # Debug output
+            print(f"Server {self.server_id} neighbors: {self.neighbors}")
 
     def send_update(self):
         """ Send distance vector updates to all neighbors """
         update_message = self.create_update_message()
-        for neighbor_id in self.neighbors:
-            neighbor_ip, neighbor_port = self.ip, self.port  # Adjust if topology stores these for neighbors
+        for neighbor_id, neighbor_info in self.neighbors.items():
+            neighbor_ip = neighbor_info['ip']
+            neighbor_port = neighbor_info['port']
             self.sock.sendto(update_message.encode(), (neighbor_ip, neighbor_port))
-        print("Routing update sent.")
+            print(f"Sent update to Server {neighbor_id} at {neighbor_ip}:{neighbor_port}")
 
     def create_update_message(self):
         """ Create a message to send the routing table to neighbors """
@@ -57,11 +65,15 @@ class Router:
     def listen_for_updates(self):
         """ Listen for incoming updates from other routers """
         while self.running:
-            data, addr = self.sock.recvfrom(1024)
-            print(f"RECEIVED A MESSAGE FROM SERVER at {addr}")
-            print(f"Message Content: {data.decode()}")
-            self.packet_counter += 1
-            # Process update messages here (not implemented yet)
+            try:
+                data, addr = self.sock.recvfrom(1024)
+                print(f"RECEIVED A MESSAGE FROM SERVER {addr}")
+                print(f"Message Content: {data.decode()}")
+                self.packet_counter += 1
+            except socket.error as e:
+                if not self.running:
+                    break
+                print(f"Socket error: {e}")
 
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
@@ -113,45 +125,38 @@ class Router:
 
     def handle_commands(self):
         """ Continuously read user commands from the terminal """
-        while self.running:
-            command = input("Enter command: ").strip().split()
-            if not command:
-                continue
+        try:
+            while self.running:
+                command = input("Enter command: ").strip().split()
+                if not command:
+                    continue
 
-            cmd = command[0].lower()
-            if cmd == "update" and len(command) == 4:
-                self.update_routing_table(int(command[2]), int(command[3]))
-            elif cmd == "step":
-                self.step()
-            elif cmd == "packets":
-                self.packets()
-            elif cmd == "display":
-                self.display()
-            elif cmd == "disable" and len(command) == 2:
-                self.disable(int(command[1]))
-            elif cmd == "crash":
-                self.crash()
-            elif cmd == "exit":
-                self.running = False
-            else:
-                print("Invalid command")
+                cmd = command[0].lower()
+                if cmd == "update" and len(command) == 4:
+                    self.update_routing_table(int(command[2]), int(command[3]))
+                elif cmd == "step":
+                    self.step()
+                elif cmd == "packets":
+                    self.packets()
+                elif cmd == "display":
+                    self.display()
+                elif cmd == "disable" and len(command) == 2:
+                    self.disable(int(command[1]))
+                elif cmd == "crash":
+                    self.crash()
+                elif cmd == "exit":
+                    self.running = False
+                else:
+                    print("Invalid command")
+        except KeyboardInterrupt:
+            print("\nCTRL+C pressed. Exiting program...")
+            self.running = False
 
     def run(self):
         """ Start server """
-        threading.Thread(target=self.listen_for_updates).start()
-        threading.Thread(target=self.run_periodic_updates).start()
-        threading.Thread(target=self.terminate_on_escape).start()
+        threading.Thread(target=self.listen_for_updates, daemon=True).start()
+        threading.Thread(target=self.run_periodic_updates, daemon=True).start()
         self.handle_commands()
-
-    def terminate_on_escape(self):
-        """ Terminate the program when ESC is pressed """
-        print("Press ESC to stop the program...")
-        while self.running:
-            if keyboard.is_pressed('esc'):
-                print("\nESC pressed. Exiting program...")
-                self.running = False
-                self.sock.close()
-                break
 
 
 def main():
