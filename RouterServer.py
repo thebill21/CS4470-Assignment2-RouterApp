@@ -43,9 +43,11 @@ class Router:
                             break
                     if neighbor_ip and neighbor_port:
                         self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
+                        self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}  # Initialize routing table
 
             # Debug output
             print(f"Server {self.server_id} neighbors: {self.neighbors}")
+            print(f"Server {self.server_id} routing table: {self.routing_table}")
 
     def send_update(self):
         """ Send distance vector updates to all neighbors """
@@ -55,6 +57,7 @@ class Router:
             neighbor_port = neighbor_info['port']
             self.sock.sendto(update_message.encode(), (neighbor_ip, neighbor_port))
             print(f"Sent update to Server {neighbor_id} at {neighbor_ip}:{neighbor_port}")
+            print(f"Update content: {update_message}")
 
     def create_update_message(self):
         """ Create a message to send the routing table to neighbors """
@@ -81,7 +84,8 @@ class Router:
         if neighbor_id in self.neighbors:
             self.neighbors[neighbor_id]['cost'] = new_cost
             self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
-            print(f"update {self.server_id} {neighbor_id} SUCCESS")
+            print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
+            print(f"Routing table after update: {self.routing_table}")
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
 
