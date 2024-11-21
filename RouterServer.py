@@ -22,14 +22,20 @@ class Router:
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
+            # Initialize self in routing table
+            self.routing_table[self.server_id] = {'next_hop': self.server_id, 'cost': 0.0}
+
+            # Process server details and assign self IP/Port
             for i in range(2, 2 + num_servers):
                 sid, sip, sport = lines[i].split()
                 sid, sport = int(sid), int(sport)
                 if sid == self.server_id:
-                    self.ip, self.port = sip, sport
+                    self.ip = sip
+                    self.port = sport
                 else:
                     self.routing_table[sid] = {'next_hop': sid, 'cost': float('inf')}
 
+            # Process neighbors
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 sid1, sid2, cost = map(int, lines[i].split())
                 if sid1 == self.server_id:
@@ -43,8 +49,10 @@ class Router:
                         self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
                         self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}
 
+            # Debug output for initialization
             print(f"Server {self.server_id} neighbors: {self.neighbors}")
             print(f"Server {self.server_id} routing table: {self.routing_table}")
+            print(f"Server {self.server_id} IP: {self.ip}, Port: {self.port}")
 
     def send_update(self):
         """ Send distance vector updates to all neighbors """
@@ -92,12 +100,12 @@ class Router:
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Prioritize direct neighbor costs
-            if dest_id in self.neighbors and next_hop == self.server_id:
-                if self.routing_table[dest_id]['cost'] != cost:
-                    self.routing_table[dest_id] = {'next_hop': dest_id, 'cost': cost}
-                    updated = True
-            elif dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
+            # Avoid overwriting direct neighbor costs
+            if dest_id in self.neighbors and next_hop != self.server_id:
+                continue
+
+            # Update routing table if the new cost is lower
+            if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
                 updated = True
 
