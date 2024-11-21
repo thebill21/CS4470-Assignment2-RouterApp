@@ -73,11 +73,31 @@ class Router:
                 data, addr = self.sock.recvfrom(1024)
                 print(f"RECEIVED A MESSAGE FROM SERVER {addr}")
                 print(f"Message Content: {data.decode()}")
+                self.process_update_message(data.decode())
                 self.packet_counter += 1
             except socket.error as e:
                 if not self.running:
                     break
                 print(f"Socket error: {e}")
+
+    def process_update_message(self, message):
+        """ Process incoming routing table updates """
+        print(f"Processing update message: {message}")
+        parts = message.split()
+        num_entries = int(parts[0])
+        sender_port = int(parts[1])
+        sender_ip = parts[2]
+
+        for i in range(num_entries):
+            idx = 3 + i * 3
+            dest_id = int(parts[idx])
+            next_hop = int(parts[idx + 1])
+            cost = float(parts[idx + 2])
+
+            # Update the routing table only if the new cost is lower
+            if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
+                self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
+                print(f"Updated routing table: {self.routing_table}")
 
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
