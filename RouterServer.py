@@ -93,40 +93,23 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
-        # Identify the sender ID from the neighbors list
-        sender_id = None
-        for neighbor_id, info in self.neighbors.items():
-            if info['ip'] == sender_ip and info['port'] == sender_port:
-                sender_id = neighbor_id
-                break
-
-        if sender_id is None:
-            print(f"Received message from unknown server: {sender_ip}:{sender_port}")
-            return
-
-        sender_cost = self.routing_table[sender_id]['cost']
         updated = False
-
-        # Process each routing table entry in the received message
         for i in range(num_entries):
             idx = 3 + i * 3
             dest_id = int(parts[idx])
             next_hop = int(parts[idx + 1])
-            cost_from_sender = float(parts[idx + 2])
+            cost = float(parts[idx + 2])
 
-            # Calculate the potential new cost to the destination
-            new_cost = sender_cost + cost_from_sender
-
-            # Ignore updates for self-loop or invalid entries
-            if dest_id == self.server_id or new_cost < 0:
-                continue
-
-            # Update the routing table if the new cost is lower
-            if dest_id not in self.routing_table or new_cost < self.routing_table[dest_id]['cost']:
-                self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
+            # Direct neighbor updates always take precedence
+            if dest_id in self.neighbors and next_hop == self.server_id:
+                if self.routing_table[dest_id]['cost'] != cost:
+                    self.routing_table[dest_id] = {'next_hop': dest_id, 'cost': cost}
+                    updated = True
+            # Update routing table if the new cost is lower (indirect routes)
+            elif dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
+                self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
                 updated = True
 
-        # If the table was updated, propagate the changes
         if updated:
             print(f"Updated routing table: {self.routing_table}")
             self.send_update()
