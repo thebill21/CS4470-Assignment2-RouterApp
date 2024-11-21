@@ -29,7 +29,7 @@ class Router:
                 if sid == self.server_id:
                     self.ip, self.port = sip, sport
                 else:
-                    self.routing_table[sid] = {'next_hop': None, 'cost': float('inf')}
+                    self.routing_table[sid] = {'next_hop': sid, 'cost': float('inf')}
 
             # Process neighbors
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
@@ -63,9 +63,7 @@ class Router:
         """ Create a message to send the routing table to neighbors """
         message = f"{len(self.routing_table)} {self.port} {self.ip} "
         for dest_id, data in self.routing_table.items():
-            next_hop = data['next_hop'] if data['next_hop'] is not None else -1
-            cost = data['cost']
-            message += f"{dest_id} {next_hop} {cost} "
+            message += f"{dest_id} {data['next_hop']} {data['cost']} "
         return message
 
     def listen_for_updates(self):
@@ -90,29 +88,27 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
-        updated = False
         for i in range(num_entries):
             idx = 3 + i * 3
             dest_id = int(parts[idx])
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Apply Bellman-Ford logic
-            if dest_id not in self.routing_table or self.routing_table[dest_id]['cost'] > cost + self.neighbors[next_hop]['cost']:
-                self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost + self.neighbors[next_hop]['cost']}
-                updated = True
-
-        if updated:
-            print(f"Routing table updated: {self.routing_table}")
+            # Update the routing table only if the new cost is lower
+            if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
+                self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
+                print(f"Updated routing table: {self.routing_table}")
 
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
         if neighbor_id in self.neighbors:
-            self.neighbors[neighbor_id]['cost'] = new_cost
-            self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
+            self.neighbors[neighbor_id]['cost'] = new_cost  # Update neighbor cost
+            self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}  # Update routing table
             print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
             print(f"Updated routing table: {self.routing_table}")
-            self.send_update()  # Propagate the update
+
+            # Propagate the update immediately
+            self.send_update()
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
 
@@ -131,8 +127,7 @@ class Router:
         print("Routing Table:")
         for dest_id in sorted(self.routing_table.keys()):
             route = self.routing_table[dest_id]
-            next_hop = route['next_hop'] if route['next_hop'] is not None else -1
-            print(f"{dest_id} {next_hop} {route['cost']}")
+            print(f"{dest_id} {route['next_hop']} {route['cost']}")
         print("display SUCCESS")
 
     def disable(self, neighbor_id):
@@ -166,7 +161,7 @@ class Router:
 
                 cmd = command[0].lower()
                 if cmd == "update" and len(command) == 4:
-                    self.update_routing_table(int(command[2]), float(command[3]))
+                    self.update_routing_table(int(command[2]), int(command[3]))
                 elif cmd == "step":
                     self.step()
                 elif cmd == "packets":
@@ -188,4 +183,22 @@ class Router:
     def run(self):
         """ Start server """
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
-        threading.Thread(target=self.run_periodic
+        threading.Thread(target=self.run_periodic_updates, daemon=True).start()
+        self.handle_commands()
+
+
+def main():
+    if len(sys.argv) != 4:
+        print("Usage: python3 RouterServer.py <server-ID> <routing-update-interval> <topology-file>")
+        sys.exit(1)
+
+    server_id = int(sys.argv[1])
+    update_interval = int(sys.argv[2])
+    topology_file = sys.argv[3]
+
+    router = Router(server_id, update_interval, topology_file)
+    router.run()
+
+
+if __name__ == "__main__":
+    main()
