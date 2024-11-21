@@ -92,10 +92,10 @@ class Router:
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Update the routing table even if the cost is the same (direct neighbors)
+            # Prioritize direct neighbor costs
             if dest_id in self.neighbors and next_hop == self.server_id:
                 if self.routing_table[dest_id]['cost'] != cost:
-                    self.routing_table[dest_id]['cost'] = cost
+                    self.routing_table[dest_id] = {'next_hop': dest_id, 'cost': cost}
                     updated = True
             elif dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
@@ -112,6 +112,7 @@ class Router:
             self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
             print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
             print(f"Updated routing table: {self.routing_table}")
+            # Propagate changes immediately
             self.send_update()
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
