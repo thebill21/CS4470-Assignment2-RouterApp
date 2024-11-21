@@ -100,26 +100,11 @@ class Router:
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Ignore self-updates (self-loop) from sender
-            if dest_id == self.server_id:
+            # Avoid overwriting direct neighbor costs
+            if dest_id in self.neighbors and next_hop != self.server_id:
                 continue
 
-            # Special case: cost to self should be extracted from the sender's data
-            if dest_id == self.server_id:
-                # Extract the cost to self (self.server_id) from the sender's routing table
-                if cost < self.routing_table[self.server_id]['cost']:
-                    self.routing_table[self.server_id] = {'next_hop': next_hop, 'cost': cost}
-                    updated = True
-                continue
-
-            # Update direct neighbor costs from sender
-            if dest_id in self.neighbors and next_hop == self.server_id:
-                if self.routing_table[dest_id]['cost'] != cost:
-                    self.routing_table[dest_id] = {'next_hop': dest_id, 'cost': cost}
-                    updated = True
-                continue
-
-            # Update routing table for other destinations if the new cost is lower
+            # Update routing table if the new cost is lower
             if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
                 updated = True
