@@ -100,12 +100,13 @@ class Router:
             next_hop = int(parts[idx + 1])
             cost = float(parts[idx + 2])
 
-            # Avoid overwriting direct neighbor costs
-            if dest_id in self.neighbors and next_hop != self.server_id:
-                continue
-
-            # Update routing table if the new cost is lower
-            if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
+            # Direct neighbor updates always take precedence
+            if dest_id in self.neighbors and next_hop == self.server_id:
+                if self.routing_table[dest_id]['cost'] != cost:
+                    self.routing_table[dest_id] = {'next_hop': dest_id, 'cost': cost}
+                    updated = True
+            # Update routing table if the new cost is lower (indirect routes)
+            elif dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
                 updated = True
 
