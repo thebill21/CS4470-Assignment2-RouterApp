@@ -18,7 +18,7 @@ class Router:
     def load_topology(self, topology_file):
         """ Load and initialize routing table and neighbors from topology file """
         with open(topology_file, 'r') as f:
-            lines = [line.split('#')[0].strip() for line in f if line.strip()]
+            lines = [line.split('#')[0].strip() for line in f if line.strip()]  # Remove comments and blank lines
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
@@ -32,7 +32,7 @@ class Router:
                     self.routing_table[sid] = {'next_hop': sid, 'cost': float('inf')}
 
             # Process neighbors
-            for i in range(2 + num_servers, 2 + num_neighbors):
+            for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 sid1, sid2, cost = map(int, lines[i].split())
                 if sid1 == self.server_id:
                     neighbor_ip, neighbor_port = None, None
@@ -41,7 +41,8 @@ class Router:
                         if int(sid) == sid2:
                             neighbor_ip, neighbor_port = sip, int(sport)
                             break
-                    self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
+                    if neighbor_ip and neighbor_port:
+                        self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
 
             # Debug output
             print(f"Server {self.server_id} neighbors: {self.neighbors}")
