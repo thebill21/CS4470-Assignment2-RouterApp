@@ -4,6 +4,8 @@ import time
 import sys
 
 class Router:
+    HEARTBEAT_THRESHOLD = 3  # Number of missed updates before marking a neighbor as unreachable
+
     def __init__(self, server_id, update_interval, topology_file):
         self.server_id = server_id
         self.update_interval = update_interval
@@ -11,9 +13,11 @@ class Router:
         self.neighbors = {}
         self.packet_counter = 0
         self.running = True
+        self.missed_updates = {}  # Initialize missed updates dictionary
         self.load_topology(topology_file)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.ip, self.port))
+        self.last_update_time = time.time()  # Initialize the last update timestamp
 
     def load_topology(self, topology_file):
         """ Load and initialize routing table and neighbors from topology file """
@@ -54,8 +58,12 @@ class Router:
             print(f"Server {self.server_id} routing table: {self.routing_table}")
             print(f"Server {self.server_id} IP: {self.ip}, Port: {self.port}")
 
-    def send_update(self):
-        """ Send distance vector updates to all neighbors """
+    def send_update(self, force=False):
+        """Send distance vector updates to all neighbors."""
+        current_time = time.time()
+        if not force and current_time - self.last_update_time < self.update_interval:
+            return  # Throttle updates based on update_interval
+
         update_message = self.create_update_message()
         for neighbor_id, neighbor_info in self.neighbors.items():
             neighbor_ip = neighbor_info['ip']
@@ -63,6 +71,8 @@ class Router:
             self.sock.sendto(update_message.encode(), (neighbor_ip, neighbor_port))
             print(f"Sent update to Server {neighbor_id} at {neighbor_ip}:{neighbor_port}")
             print(f"Update content: {update_message}")
+
+        self.last_update_time = current_time  # Update the last update timestamp
 
     def create_update_message(self):
         """ Create a message to send the routing table to neighbors """
@@ -86,14 +96,13 @@ class Router:
                 print(f"Socket error: {e}")
 
     def process_update_message(self, message):
-        """ Process incoming routing table updates """
+        """Process incoming routing table updates."""
         print(f"Processing update message: {message}")
         parts = message.split()
         num_entries = int(parts[0])
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
-        # Identify the sender ID from the neighbors list
         sender_id = None
         for neighbor_id, info in self.neighbors.items():
             if info['ip'] == sender_ip and info['port'] == sender_port:
@@ -104,38 +113,50 @@ class Router:
             print(f"Received message from unknown server: {sender_ip}:{sender_port}")
             return
 
+        # Reset the missed updates counter for the sender
+        self.missed_updates[sender_id] = 0
+
         sender_cost = self.routing_table[sender_id]['cost']
         updated = False
 
-        # Process each routing table entry in the received message
+        # Reevaluate the direct cost to this neighbor
+        if self.neighbors[sender_id]['cost'] != sender_cost:
+            self.routing_table[sender_id] = {
+                'next_hop': sender_id,
+                'cost': self.neighbors[sender_id]['cost']
+            }
+            updated = True
+
         for i in range(num_entries):
             idx = 3 + i * 3
             dest_id = int(parts[idx])
             next_hop = int(parts[idx + 1])
             cost_from_sender = float(parts[idx + 2])
 
-            # Ignore the sender's self-route (e.g., "2 2 0.0" from Server 2)
             if dest_id == sender_id:
                 continue
 
-            # Handle the route to self (e.g., "1 1 6" from Server 2)
             if dest_id == self.server_id:
-                # Update the route to the sender with the received cost
                 if self.routing_table[sender_id]['cost'] != cost_from_sender:
                     self.routing_table[sender_id] = {'next_hop': sender_id, 'cost': cost_from_sender}
                     updated = True
                 continue
 
-            # Handle other routes using Bellman-Ford
             new_cost = sender_cost + cost_from_sender
             if dest_id not in self.routing_table or new_cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
                 updated = True
 
-        # If the table was updated, propagate the changes
+        # Check all direct neighbors for potential updates
+        for neighbor_id, neighbor_info in self.neighbors.items():
+            direct_cost = neighbor_info['cost']
+            if self.routing_table[neighbor_id]['cost'] != direct_cost:
+                self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': direct_cost}
+                updated = True
+
         if updated:
             print(f"Updated routing table: {self.routing_table}")
-            self.send_update()
+            self.send_update(force=True)  # Force update propagation when changes occur
         else:
             print("No updates made to the routing table.")
 
