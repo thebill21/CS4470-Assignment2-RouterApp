@@ -93,25 +93,51 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
+        # Identify the sender ID from the neighbors list
+        sender_id = None
+        for neighbor_id, info in self.neighbors.items():
+            if info['ip'] == sender_ip and info['port'] == sender_port:
+                sender_id = neighbor_id
+                break
+
+        if sender_id is None:
+            print(f"Received message from unknown server: {sender_ip}:{sender_port}")
+            return
+
+        sender_cost = self.routing_table[sender_id]['cost']
         updated = False
+
+        # Process each routing table entry in the received message
         for i in range(num_entries):
             idx = 3 + i * 3
             dest_id = int(parts[idx])
             next_hop = int(parts[idx + 1])
-            cost = float(parts[idx + 2])
+            cost_from_sender = float(parts[idx + 2])
 
-            # Avoid overwriting direct neighbor costs
-            if dest_id in self.neighbors and next_hop != self.server_id:
+            # Ignore the sender's self-route (e.g., "2 2 0.0" from Server 2)
+            if dest_id == sender_id:
                 continue
 
-            # Update routing table if the new cost is lower
-            if dest_id not in self.routing_table or cost < self.routing_table[dest_id]['cost']:
-                self.routing_table[dest_id] = {'next_hop': next_hop, 'cost': cost}
+            # Handle the route to self (e.g., "1 1 6" from Server 2)
+            if dest_id == self.server_id:
+                # Update the route to the sender with the received cost
+                if self.routing_table[sender_id]['cost'] != cost_from_sender:
+                    self.routing_table[sender_id] = {'next_hop': sender_id, 'cost': cost_from_sender}
+                    updated = True
+                continue
+
+            # Handle other routes using Bellman-Ford
+            new_cost = sender_cost + cost_from_sender
+            if dest_id not in self.routing_table or new_cost < self.routing_table[dest_id]['cost']:
+                self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
                 updated = True
 
+        # If the table was updated, propagate the changes
         if updated:
             print(f"Updated routing table: {self.routing_table}")
             self.send_update()
+        else:
+            print("No updates made to the routing table.")
 
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
