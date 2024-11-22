@@ -4,6 +4,8 @@ import time
 import sys
 
 class Router:
+    HEARTBEAT_THRESHOLD = 3  # Number of missed updates before marking a neighbor as unreachable
+
     def __init__(self, server_id, update_interval, topology_file):
         self.server_id = server_id
         self.update_interval = update_interval
@@ -11,6 +13,7 @@ class Router:
         self.neighbors = {}
         self.packet_counter = 0
         self.running = True
+        self.missed_updates = {}  # Track missed updates for each neighbor
         self.load_topology(topology_file)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.ip, self.port))
@@ -48,8 +51,8 @@ class Router:
                     if neighbor_ip and neighbor_port:
                         self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
                         self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}
+                        self.missed_updates[sid2] = 0  # Initialize missed updates counter
 
-            # Debug output for initialization
             print(f"Server {self.server_id} neighbors: {self.neighbors}")
             print(f"Server {self.server_id} routing table: {self.routing_table}")
             print(f"Server {self.server_id} IP: {self.ip}, Port: {self.port}")
@@ -93,7 +96,6 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
-        # Identify the sender ID from the neighbors list
         sender_id = None
         for neighbor_id, info in self.neighbors.items():
             if info['ip'] == sender_ip and info['port'] == sender_port:
@@ -104,35 +106,32 @@ class Router:
             print(f"Received message from unknown server: {sender_ip}:{sender_port}")
             return
 
+        # Reset the missed updates counter for the sender
+        self.missed_updates[sender_id] = 0
+
         sender_cost = self.routing_table[sender_id]['cost']
         updated = False
 
-        # Process each routing table entry in the received message
         for i in range(num_entries):
             idx = 3 + i * 3
             dest_id = int(parts[idx])
             next_hop = int(parts[idx + 1])
             cost_from_sender = float(parts[idx + 2])
 
-            # Ignore the sender's self-route (e.g., "2 2 0.0" from Server 2)
             if dest_id == sender_id:
                 continue
 
-            # Handle the route to self (e.g., "1 1 6" from Server 2)
             if dest_id == self.server_id:
-                # Update the route to the sender with the received cost
                 if self.routing_table[sender_id]['cost'] != cost_from_sender:
                     self.routing_table[sender_id] = {'next_hop': sender_id, 'cost': cost_from_sender}
                     updated = True
                 continue
 
-            # Handle other routes using Bellman-Ford
             new_cost = sender_cost + cost_from_sender
             if dest_id not in self.routing_table or new_cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
                 updated = True
 
-        # If the table was updated, propagate the changes
         if updated:
             print(f"Updated routing table: {self.routing_table}")
             self.send_update()
@@ -146,7 +145,6 @@ class Router:
             self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
             print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
             print(f"Updated routing table: {self.routing_table}")
-            # Propagate changes immediately
             self.send_update()
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
@@ -183,6 +181,17 @@ class Router:
         for neighbor_id in self.neighbors:
             self.disable(neighbor_id)
         print("crash SUCCESS")
+
+    def monitor_heartbeat(self):
+        """ Monitor missed updates from neighbors and handle unreachable neighbors """
+        while self.running:
+            time.sleep(self.update_interval)
+            for neighbor_id in list(self.missed_updates.keys()):
+                self.missed_updates[neighbor_id] += 1
+                if self.missed_updates[neighbor_id] > self.HEARTBEAT_THRESHOLD:
+                    self.routing_table[neighbor_id]['cost'] = float('inf')
+                    print(f"Neighbor {neighbor_id} unreachable. Updated routing table.")
+                    self.send_update()
 
     def run_periodic_updates(self):
         """ Periodically send routing updates """
@@ -223,6 +232,7 @@ class Router:
         """ Start server """
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
         threading.Thread(target=self.run_periodic_updates, daemon=True).start()
+        threading.Thread(target=self.monitor_heartbeat, daemon=True).start()  # Start heartbeat monitoring
         self.handle_commands()
 
 
@@ -241,3 +251,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                         
