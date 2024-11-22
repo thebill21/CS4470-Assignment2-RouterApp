@@ -4,8 +4,6 @@ import time
 import sys
 
 class Router:
-    HEARTBEAT_THRESHOLD = 3  # Number of missed updates before marking a neighbor as unreachable
-
     def __init__(self, server_id, update_interval, topology_file):
         self.server_id = server_id
         self.update_interval = update_interval
@@ -13,7 +11,6 @@ class Router:
         self.neighbors = {}
         self.packet_counter = 0
         self.running = True
-        self.missed_updates = {}  # Track missed updates for each neighbor
         self.load_topology(topology_file)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.ip, self.port))
@@ -51,8 +48,8 @@ class Router:
                     if neighbor_ip and neighbor_port:
                         self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
                         self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}
-                        self.missed_updates[sid2] = 0  # Initialize missed updates counter
 
+            # Debug output for initialization
             print(f"Server {self.server_id} neighbors: {self.neighbors}")
             print(f"Server {self.server_id} routing table: {self.routing_table}")
             print(f"Server {self.server_id} IP: {self.ip}, Port: {self.port}")
@@ -88,6 +85,37 @@ class Router:
                     break
                 print(f"Socket error: {e}")
 
+    def recalculate_routing_table(self):
+        """ Recalculate the entire routing table using the current neighbors and their costs """
+        print("Recalculating routing table...")
+        # Reset all non-direct neighbor routes
+        for dest_id in self.routing_table.keys():
+            if dest_id != self.server_id and dest_id not in self.neighbors:
+                self.routing_table[dest_id] = {'next_hop': None, 'cost': float('inf')}
+
+        # Recalculate routes for all destinations
+        for dest_id in self.routing_table.keys():
+            if dest_id == self.server_id:
+                continue  # Skip self
+
+            best_cost = float('inf')
+            best_hop = None
+
+            for neighbor_id, neighbor_info in self.neighbors.items():
+                if neighbor_id in self.routing_table:
+                    neighbor_cost = neighbor_info['cost']
+                    route_cost = self.routing_table[neighbor_id]['cost']
+                    total_cost = neighbor_cost + route_cost
+
+                    if total_cost < best_cost:
+                        best_cost = total_cost
+                        best_hop = neighbor_id
+
+            if best_cost < float('inf'):
+                self.routing_table[dest_id] = {'next_hop': best_hop, 'cost': best_cost}
+
+        print(f"Routing table recalculated: {self.routing_table}")
+
     def process_update_message(self, message):
         """ Process incoming routing table updates """
         print(f"Processing update message: {message}")
@@ -96,6 +124,7 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
+        # Identify the sender ID from the neighbors list
         sender_id = None
         for neighbor_id, info in self.neighbors.items():
             if info['ip'] == sender_ip and info['port'] == sender_port:
@@ -105,9 +134,6 @@ class Router:
         if sender_id is None:
             print(f"Received message from unknown server: {sender_ip}:{sender_port}")
             return
-
-        # Reset the missed updates counter for the sender
-        self.missed_updates[sender_id] = 0
 
         sender_cost = self.routing_table[sender_id]['cost']
         updated = False
@@ -134,17 +160,15 @@ class Router:
 
         if updated:
             print(f"Updated routing table: {self.routing_table}")
+            self.recalculate_routing_table()
             self.send_update()
-        else:
-            print("No updates made to the routing table.")
 
     def update_routing_table(self, neighbor_id, new_cost):
         """ Update link cost to a neighbor and adjust routing table """
         if neighbor_id in self.neighbors:
             self.neighbors[neighbor_id]['cost'] = new_cost
             self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
-            print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
-            print(f"Updated routing table: {self.routing_table}")
+            self.recalculate_routing_table()
             self.send_update()
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
@@ -172,6 +196,7 @@ class Router:
         if neighbor_id in self.neighbors:
             self.neighbors[neighbor_id]['cost'] = float('inf')
             self.routing_table[neighbor_id]['cost'] = float('inf')
+            self.recalculate_routing_table()
             print(f"disable {neighbor_id} SUCCESS")
         else:
             print(f"disable {neighbor_id} FAILED: Not a neighbor")
@@ -181,17 +206,6 @@ class Router:
         for neighbor_id in self.neighbors:
             self.disable(neighbor_id)
         print("crash SUCCESS")
-
-    def monitor_heartbeat(self):
-        """ Monitor missed updates from neighbors and handle unreachable neighbors """
-        while self.running:
-            time.sleep(self.update_interval)
-            for neighbor_id in list(self.missed_updates.keys()):
-                self.missed_updates[neighbor_id] += 1
-                if self.missed_updates[neighbor_id] > self.HEARTBEAT_THRESHOLD:
-                    self.routing_table[neighbor_id]['cost'] = float('inf')
-                    print(f"Neighbor {neighbor_id} unreachable. Updated routing table.")
-                    self.send_update()
 
     def run_periodic_updates(self):
         """ Periodically send routing updates """
@@ -232,7 +246,6 @@ class Router:
         """ Start server """
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
         threading.Thread(target=self.run_periodic_updates, daemon=True).start()
-        threading.Thread(target=self.monitor_heartbeat, daemon=True).start()  # Start heartbeat monitoring
         self.handle_commands()
 
 
@@ -251,4 +264,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                         
