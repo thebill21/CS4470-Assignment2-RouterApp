@@ -19,7 +19,7 @@ class Router:
         self.sock.bind((self.ip, self.port))
 
     def load_topology(self, topology_file):
-        """Load and initialize routing table and neighbors from topology file."""
+        """ Load and initialize routing table and neighbors from topology file """
         with open(topology_file, 'r') as f:
             lines = [line.split('#')[0].strip() for line in f if line.strip()]
             num_servers = int(lines[0])
@@ -58,7 +58,11 @@ class Router:
             print(f"Server {self.server_id} IP: {self.ip}, Port: {self.port}")
 
     def send_update(self):
+<<<<<<< HEAD
         """Send distance vector updates to all neighbors."""
+=======
+        """ Send distance vector updates to all neighbors """
+>>>>>>> fde31f4214cab5a23be98929010467765b319871
         update_message = self.create_update_message()
         for neighbor_id, neighbor_info in self.neighbors.items():
             neighbor_ip = neighbor_info['ip']
@@ -68,14 +72,14 @@ class Router:
             print(f"Update content: {update_message}")
 
     def create_update_message(self):
-        """Create a message to send the routing table to neighbors."""
+        """ Create a message to send the routing table to neighbors """
         message = f"{len(self.routing_table)} {self.port} {self.ip} "
         for dest_id, data in self.routing_table.items():
             message += f"{dest_id} {data['next_hop']} {data['cost']} "
         return message
 
     def listen_for_updates(self):
-        """Listen for incoming updates from other routers."""
+        """ Listen for incoming updates from other routers """
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(1024)
@@ -89,14 +93,13 @@ class Router:
                 print(f"Socket error: {e}")
 
     def process_update_message(self, message):
-        """Process incoming routing table updates."""
+        """ Process incoming routing table updates """
         print(f"Processing update message: {message}")
         parts = message.split()
         num_entries = int(parts[0])
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
-        # Identify the sender ID from the neighbors list
         sender_id = None
         for neighbor_id, info in self.neighbors.items():
             if info['ip'] == sender_ip and info['port'] == sender_port:
@@ -143,7 +146,11 @@ class Router:
             print("No updates made to the routing table.")
 
     def update_routing_table(self, neighbor_id, new_cost):
+<<<<<<< HEAD
         """Update link cost to a neighbor and adjust routing table."""
+=======
+        """ Update link cost to a neighbor and adjust routing table """
+>>>>>>> fde31f4214cab5a23be98929010467765b319871
         if neighbor_id in self.neighbors:
             self.neighbors[neighbor_id]['cost'] = new_cost
             self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
@@ -154,17 +161,25 @@ class Router:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
 
     def step(self):
+<<<<<<< HEAD
         """Send immediate routing updates."""
+=======
+        """ Send immediate routing updates """
+>>>>>>> fde31f4214cab5a23be98929010467765b319871
         self.send_update()
         print("step SUCCESS")
 
     def packets(self):
+<<<<<<< HEAD
         """Display and reset the number of received packets."""
+=======
+        """ Display and reset the number of received packets """
+>>>>>>> fde31f4214cab5a23be98929010467765b319871
         print(f"packets: {self.packet_counter}")
         self.packet_counter = 0
 
     def display(self):
-        """Display the current routing table."""
+        """ Display the current routing table """
         print("Routing Table:")
         for dest_id in sorted(self.routing_table.keys()):
             route = self.routing_table[dest_id]
@@ -172,7 +187,11 @@ class Router:
         print("display SUCCESS")
 
     def disable(self, neighbor_id):
+<<<<<<< HEAD
         """Disable the link to a given neighbor."""
+=======
+        """ Disable the link to a given neighbor """
+>>>>>>> fde31f4214cab5a23be98929010467765b319871
         if neighbor_id in self.neighbors:
             self.neighbors[neighbor_id]['cost'] = float('inf')
             self.routing_table[neighbor_id]['cost'] = float('inf')
@@ -181,13 +200,21 @@ class Router:
             print(f"disable {neighbor_id} FAILED: Not a neighbor")
 
     def crash(self):
+<<<<<<< HEAD
         """Simulate a server crash by disabling all connections."""
+=======
+        """ Simulate a server crash by disabling all connections """
+>>>>>>> fde31f4214cab5a23be98929010467765b319871
         for neighbor_id in self.neighbors:
             self.disable(neighbor_id)
         print("crash SUCCESS")
 
     def monitor_heartbeat(self):
+<<<<<<< HEAD
         """Monitor missed updates from neighbors and handle unreachable neighbors."""
+=======
+        """ Monitor missed updates from neighbors and handle unreachable neighbors """
+>>>>>>> fde31f4214cab5a23be98929010467765b319871
         while self.running:
             time.sleep(self.update_interval)
             for neighbor_id in list(self.missed_updates.keys()):
@@ -198,13 +225,13 @@ class Router:
                     self.send_update()
 
     def run_periodic_updates(self):
-        """Periodically send routing updates."""
+        """ Periodically send routing updates """
         while self.running:
             time.sleep(self.update_interval)
             self.send_update()
 
     def handle_commands(self):
-        """Continuously read user commands from the terminal."""
+        """ Continuously read user commands from the terminal """
         try:
             while self.running:
                 command = input("Enter command: ").strip().split()
@@ -233,7 +260,7 @@ class Router:
             self.running = False
 
     def run(self):
-        """Start server."""
+        """ Start server """
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
         threading.Thread(target=self.run_periodic_updates, daemon=True).start()
         threading.Thread(target=self.monitor_heartbeat, daemon=True).start()  # Start heartbeat monitoring
@@ -255,3 +282,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                         
