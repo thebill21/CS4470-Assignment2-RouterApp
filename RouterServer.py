@@ -17,6 +17,7 @@ class Router:
         self.load_topology(topology_file)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.ip, self.port))
+        self.last_update_time = time.time()  # Initialize the last update timestamp
 
     def load_topology(self, topology_file):
         """Load and initialize routing table and neighbors from topology file."""
@@ -57,8 +58,12 @@ class Router:
             print(f"Server {self.server_id} routing table: {self.routing_table}")
             print(f"Server {self.server_id} IP: {self.ip}, Port: {self.port}")
 
-    def send_update(self):
+    def send_update(self, force=False):
         """Send distance vector updates to all neighbors."""
+        current_time = time.time()
+        if not force and current_time - self.last_update_time < self.update_interval:
+            return  # Throttle updates based on update_interval
+
         update_message = self.create_update_message()
         for neighbor_id, neighbor_info in self.neighbors.items():
             neighbor_ip = neighbor_info['ip']
@@ -66,6 +71,8 @@ class Router:
             self.sock.sendto(update_message.encode(), (neighbor_ip, neighbor_port))
             print(f"Sent update to Server {neighbor_id} at {neighbor_ip}:{neighbor_port}")
             print(f"Update content: {update_message}")
+
+        self.last_update_time = current_time  # Update the last update timestamp
 
     def create_update_message(self):
         """Create a message to send the routing table to neighbors."""
@@ -96,7 +103,6 @@ class Router:
         sender_port = int(parts[1])
         sender_ip = parts[2]
 
-        # Identify the sender ID from the neighbors list
         sender_id = None
         for neighbor_id, info in self.neighbors.items():
             if info['ip'] == sender_ip and info['port'] == sender_port:
@@ -132,13 +138,10 @@ class Router:
             if dest_id not in self.routing_table or new_cost < self.routing_table[dest_id]['cost']:
                 self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
                 updated = True
-            elif new_cost > self.routing_table[dest_id]['cost']:
-                self.routing_table[dest_id]['cost'] = new_cost
-                updated = True
 
         if updated:
             print(f"Updated routing table: {self.routing_table}")
-            self.send_update()
+            self.send_update(force=True)  # Force update propagation when changes occur
         else:
             print("No updates made to the routing table.")
 
