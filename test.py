@@ -66,7 +66,6 @@ def main():
 
         try:
             if command == "server" and len(command_line) == 4:
-                # Initialize the server
                 topology_file = command_line[1]
                 time_interval = int(command_line[3])
                 if time_interval < 15:
@@ -74,6 +73,8 @@ def main():
                     continue
 
                 read_topology(topology_file)
+                threading.Thread(target=setup_listener, daemon=True).start()
+                threading.Thread(target=connect_to_neighbors, daemon=True).start()
                 threading.Thread(target=periodic_updates, daemon=True).start()
                 print("Server started with periodic updates.")
 
@@ -197,13 +198,24 @@ def make_message():
 
 
 def send_message(neighbor, message):
-    """Sends a message to a neighbor."""
+    """Sends a message to a connected neighbor."""
+    for conn, n in open_channels:
+        if n == neighbor:
+            try:
+                conn.sendall(message.encode())
+                return
+            except Exception as e:
+                print(f"Error sending message to {neighbor.id}: {e}")
+                return
+
+    print(f"Neighbor {neighbor.id} not found in open channels. Retrying connection...")
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((neighbor.ip, neighbor.port))
-            s.sendall(message.encode())
+        conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        conn.connect((neighbor.ip, neighbor.port))
+        conn.sendall(message.encode())
+        open_channels.append((conn, neighbor))
     except Exception as e:
-        print(f"Error sending message to {neighbor.ip}: {e}")
+        print(f"Failed to send message to {neighbor.id}: {e}")
 
 
 def process_message(message):
@@ -254,6 +266,55 @@ def crash():
         for neighbor in list(neighbors):
             disable(neighbor.id)
         print("Server crashed.")
+
+def setup_listener():
+    """Sets up a listener for incoming connections."""
+    try:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind((my_ip, my_node.port))
+        listener.listen()
+        print(f"Server is listening on {my_ip}:{my_node.port}")
+
+        while True:
+            conn, addr = listener.accept()
+            threading.Thread(target=handle_connection, args=(conn, addr), daemon=True).start()
+
+    except Exception as e:
+        print(f"Error setting up listener: {e}")
+        sys.exit(1)
+
+def handle_connection(conn, addr):
+    """Handles an incoming connection."""
+    global number_of_packets_received
+    try:
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+
+            number_of_packets_received += 1
+            message = data.decode()
+            print(f"Received message from {addr}: {message}")
+            process_message(message)
+
+    except Exception as e:
+        print(f"Error handling connection from {addr}: {e}")
+    finally:
+        conn.close()
+
+
+def connect_to_neighbors():
+    """Establishes persistent connections to all neighbors."""
+    global open_channels
+
+    for neighbor in neighbors:
+        try:
+            conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            conn.connect((neighbor.ip, neighbor.port))
+            open_channels.append((conn, neighbor))
+            print(f"Connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
+        except Exception as e:
+            print(f"Failed to connect to neighbor {neighbor.id}: {e}")
 
 
 if __name__ == "__main__":
