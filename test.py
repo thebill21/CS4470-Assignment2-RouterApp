@@ -3,9 +3,7 @@ import selectors
 import threading
 import time
 import json
-import sys
 from collections import defaultdict
-from threading import Lock
 
 # Globals
 time_interval = 0
@@ -20,11 +18,11 @@ number_of_packets_received = 0
 next_hop = {}
 read_selector = selectors.DefaultSelector()
 write_selector = selectors.DefaultSelector()
-neighbors_lock = Lock()
+lock = threading.Lock()
 
 
 class Node:
-    """Represents a node in the network."""
+    """Represents a network node."""
     def __init__(self, node_id, ip, port):
         self.id = node_id
         self.ip = ip
@@ -35,11 +33,6 @@ class Node:
 
     def __eq__(self, other):
         return (self.id, self.ip, self.port) == (other.id, other.ip)
-
-
-def get_my_ip():
-    """Get the current machine's IP address."""
-    return socket.gethostbyname(socket.gethostname())
 
 
 def main():
@@ -69,14 +62,13 @@ def main():
                 topology_file = command_line[1]
                 time_interval = int(command_line[3])
                 if time_interval < 15:
-                    print("Please input routing update interval above 15 seconds.")
+                    print("Please input a routing update interval of at least 15 seconds.")
                     continue
 
                 read_topology(topology_file)
                 threading.Thread(target=setup_listener, daemon=True).start()
-                threading.Thread(target=connect_to_neighbors, daemon=True).start()
                 threading.Thread(target=periodic_updates, daemon=True).start()
-                print("Server started with periodic updates.")
+                print("Server initialized and started periodic updates.")
 
             elif command == "update" and len(command_line) == 4:
                 update(int(command_line[1]), int(command_line[2]), int(command_line[3]))
@@ -103,11 +95,9 @@ def main():
             print(f"Error processing command: {e}")
 
 
-def periodic_updates():
-    """Sends periodic updates to neighbors."""
-    while True:
-        time.sleep(time_interval)
-        step()
+def get_my_ip():
+    """Get the current machine's IP address."""
+    return socket.gethostbyname(socket.gethostname())
 
 
 def read_topology(filename):
@@ -134,7 +124,7 @@ def read_topology(filename):
                 next_hop[node] = None
             routing_table[node] = cost
 
-        for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
+        for i in range(2 + num_servers, 2 + num_neighbors + 2):
             parts = lines[i].split()
             from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
             if from_id == my_id:
@@ -151,20 +141,44 @@ def read_topology(filename):
         print("Topology file read successfully.")
     except Exception as e:
         print(f"Error reading topology file: {e}")
-        sys.exit(1)
 
 
-def get_node_by_id(node_id):
-    """Fetches a node by its ID."""
-    for node in nodes:
-        if node.id == node_id:
-            return node
-    return None
+def setup_listener():
+    """Sets up a listener for incoming connections."""
+    try:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind((my_ip, my_node.port))
+        listener.listen()
+        print(f"Listening on {my_ip}:{my_node.port}")
+
+        while True:
+            conn, addr = listener.accept()
+            threading.Thread(target=handle_connection, args=(conn, addr), daemon=True).start()
+    except Exception as e:
+        print(f"Error setting up listener: {e}")
+
+
+def handle_connection(conn, addr):
+    """Handles incoming connections and processes messages."""
+    global number_of_packets_received
+    try:
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+            number_of_packets_received += 1
+            message = data.decode()
+            print(f"Message received from {addr}: {message}")
+            process_message(message)
+    except Exception as e:
+        print(f"Error handling connection: {e}")
+    finally:
+        conn.close()
 
 
 def update(server_id1, server_id2, cost):
-    """Updates the link cost between two servers."""
-    with neighbors_lock:
+    """Updates the cost between two servers."""
+    with lock:
         if server_id1 == my_id or server_id2 == my_id:
             target_id = server_id2 if server_id1 == my_id else server_id1
             target_node = get_node_by_id(target_id)
@@ -178,14 +192,21 @@ def update(server_id1, server_id2, cost):
             print("This server is not involved in the specified link.")
 
 
+def periodic_updates():
+    """Sends periodic updates to neighbors."""
+    while True:
+        time.sleep(time_interval)
+        step()
+
+
 def step():
-    """Sends a routing update to all neighbors."""
-    with neighbors_lock:
+    """Sends routing updates to neighbors."""
+    with lock:
         if neighbors:
             message = make_message()
             for neighbor in neighbors:
                 send_message(neighbor, message)
-                print(f"Message sent to {neighbor.ip}.")
+                print(f"Message sent to {neighbor.ip}")
             print("Step completed.")
         else:
             print("No neighbors to send updates to.")
@@ -193,29 +214,17 @@ def step():
 
 def make_message():
     """Creates a routing table message."""
-    message = {node.id: cost for node, cost in routing_table.items()}
-    return json.dumps(message)
+    return json.dumps({node.id: cost for node, cost in routing_table.items()})
 
 
 def send_message(neighbor, message):
-    """Sends a message to a connected neighbor."""
-    for conn, n in open_channels:
-        if n == neighbor:
-            try:
-                conn.sendall(message.encode())
-                return
-            except Exception as e:
-                print(f"Error sending message to {neighbor.id}: {e}")
-                return
-
-    print(f"Neighbor {neighbor.id} not found in open channels. Retrying connection...")
+    """Sends a message to a neighbor."""
     try:
-        conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        conn.connect((neighbor.ip, neighbor.port))
-        conn.sendall(message.encode())
-        open_channels.append((conn, neighbor))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((neighbor.ip, neighbor.port))
+            s.sendall(message.encode())
     except Exception as e:
-        print(f"Failed to send message to {neighbor.id}: {e}")
+        print(f"Error sending message to {neighbor.ip}: {e}")
 
 
 def process_message(message):
@@ -249,7 +258,7 @@ def display():
 
 def disable(server_id):
     """Disables a link to a specific neighbor."""
-    with neighbors_lock:
+    with lock:
         target_node = get_node_by_id(server_id)
         if target_node in neighbors:
             neighbors.remove(target_node)
@@ -262,59 +271,18 @@ def disable(server_id):
 
 def crash():
     """Simulates a server crash by disabling all links."""
-    with neighbors_lock:
+    with lock:
         for neighbor in list(neighbors):
             disable(neighbor.id)
         print("Server crashed.")
 
-def setup_listener():
-    """Sets up a listener for incoming connections."""
-    try:
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listener.bind((my_ip, my_node.port))
-        listener.listen()
-        print(f"Server is listening on {my_ip}:{my_node.port}")
 
-        while True:
-            conn, addr = listener.accept()
-            threading.Thread(target=handle_connection, args=(conn, addr), daemon=True).start()
-
-    except Exception as e:
-        print(f"Error setting up listener: {e}")
-        sys.exit(1)
-
-def handle_connection(conn, addr):
-    """Handles an incoming connection."""
-    global number_of_packets_received
-    try:
-        while True:
-            data = conn.recv(1024)
-            if not data:
-                break
-
-            number_of_packets_received += 1
-            message = data.decode()
-            print(f"Received message from {addr}: {message}")
-            process_message(message)
-
-    except Exception as e:
-        print(f"Error handling connection from {addr}: {e}")
-    finally:
-        conn.close()
-
-
-def connect_to_neighbors():
-    """Establishes persistent connections to all neighbors."""
-    global open_channels
-
-    for neighbor in neighbors:
-        try:
-            conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            conn.connect((neighbor.ip, neighbor.port))
-            open_channels.append((conn, neighbor))
-            print(f"Connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
-        except Exception as e:
-            print(f"Failed to connect to neighbor {neighbor.id}: {e}")
+def get_node_by_id(node_id):
+    """Fetches a node by its ID."""
+    for node in nodes:
+        if node.id == node_id:
+            return node
+    return None
 
 
 if __name__ == "__main__":
