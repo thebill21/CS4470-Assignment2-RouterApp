@@ -1,7 +1,10 @@
 import socket
+import selectors
 import threading
 import time
 import sys
+import json
+
 
 class Router:
     HEARTBEAT_THRESHOLD = 3  # Number of missed updates before marking a neighbor as unreachable
@@ -11,16 +14,18 @@ class Router:
         self.update_interval = update_interval
         self.routing_table = {}
         self.neighbors = {}
+        self.open_channels = {}
         self.packet_counter = 0
         self.running = True
         self.missed_updates = {}  # Initialize missed updates dictionary
-        self.load_topology(topology_file)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.load_topology(topology_file)
         self.sock.bind((self.ip, self.port))
         self.last_update_time = time.time()  # Initialize the last update timestamp
 
     def load_topology(self, topology_file):
-        """ Load and initialize routing table and neighbors from topology file """
+        """Load and initialize routing table and neighbors from topology file."""
         with open(topology_file, 'r') as f:
             lines = [line.split('#')[0].strip() for line in f if line.strip()]
             num_servers = int(lines[0])
@@ -52,11 +57,25 @@ class Router:
                     if neighbor_ip and neighbor_port:
                         self.neighbors[sid2] = {'cost': cost, 'ip': neighbor_ip, 'port': neighbor_port}
                         self.routing_table[sid2] = {'next_hop': sid2, 'cost': cost}
+                        self.missed_updates[sid2] = 0  # Initialize missed updates counter
 
-            # Debug output for initialization
             print(f"Server {self.server_id} neighbors: {self.neighbors}")
             print(f"Server {self.server_id} routing table: {self.routing_table}")
             print(f"Server {self.server_id} IP: {self.ip}, Port: {self.port}")
+
+        # Establish TCP connections to neighbors
+        self.connect_to_neighbors()
+
+    def connect_to_neighbors(self):
+        """Establish TCP connections to neighbors."""
+        for neighbor_id, neighbor_info in self.neighbors.items():
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect((neighbor_info['ip'], neighbor_info['port']))
+                self.open_channels[neighbor_id] = s
+                print(f"Connected to neighbor {neighbor_id} at {neighbor_info['ip']}:{neighbor_info['port']}")
+            except Exception as e:
+                print(f"Failed to connect to neighbor {neighbor_id}: {e}")
 
     def send_update(self, force=False):
         """Send distance vector updates to all neighbors."""
@@ -64,29 +83,26 @@ class Router:
             return  # Throttle updates based on update_interval
 
         update_message = self.create_update_message()
-        for neighbor_id, neighbor_info in self.neighbors.items():
-            neighbor_ip = neighbor_info['ip']
-            neighbor_port = neighbor_info['port']
-            self.sock.sendto(update_message.encode(), (neighbor_ip, neighbor_port))
-            print(f"Sent update to Server {neighbor_id} at {neighbor_ip}:{neighbor_port}")
-            print(f"Update content: {update_message}")
+        for neighbor_id, channel in self.open_channels.items():
+            try:
+                channel.sendall(update_message.encode())
+                print(f"Sent update to Server {neighbor_id}")
+            except Exception as e:
+                print(f"Failed to send update to Server {neighbor_id}: {e}")
 
         self.last_update_time = time.time()  # Update the last update timestamp
 
     def create_update_message(self):
-        """ Create a message to send the routing table to neighbors """
-        message = f"{len(self.routing_table)} {self.port} {self.ip} "
-        for dest_id, data in self.routing_table.items():
-            message += f"{dest_id} {data['next_hop']} {data['cost']} "
-        return message
+        """Create a message to send the routing table to neighbors."""
+        message = {"server_id": self.server_id, "routing_table": self.routing_table}
+        return json.dumps(message)
 
     def listen_for_updates(self):
-        """ Listen for incoming updates from other routers """
+        """Listen for incoming updates from other routers."""
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(1024)
-                print(f"RECEIVED A MESSAGE FROM SERVER {addr}")
-                print(f"Message Content: {data.decode()}")
+                print(f"Received message from {addr}")
                 self.process_update_message(data.decode())
                 self.packet_counter += 1
             except socket.error as e:
@@ -96,160 +112,69 @@ class Router:
 
     def process_update_message(self, message):
         """Process incoming routing table updates."""
-        print(f"Processing update message: {message}")
-        parts = message.split()
-        num_entries = int(parts[0])
-        sender_port = int(parts[1])
-        sender_ip = parts[2]
+        try:
+            data = json.loads(message)
+            sender_id = data.get("server_id")
+            received_table = data.get("routing_table")
+            updated = False
 
-        sender_id = None
-        for neighbor_id, info in self.neighbors.items():
-            if info['ip'] == sender_ip and info['port'] == sender_port:
-                sender_id = neighbor_id
-                break
+            for dest_id, route_info in received_table.items():
+                current_cost = self.routing_table.get(dest_id, {}).get("cost", float("inf"))
+                new_cost = route_info["cost"] + self.neighbors[sender_id]["cost"]
 
-        if sender_id is None:
-            print(f"Received message from unknown server: {sender_ip}:{sender_port}")
-            return
-
-        # Reset the missed updates counter for the sender
-        self.missed_updates[sender_id] = 0
-
-        sender_cost = self.routing_table[sender_id]['cost']
-        updated = False
-
-        # Reevaluate the direct cost to this neighbor
-        direct_cost = self.neighbors[sender_id]['cost']
-        if direct_cost != sender_cost:
-            self.routing_table[sender_id] = {'next_hop': sender_id, 'cost': direct_cost}
-            updated = True
-
-        for i in range(num_entries):
-            idx = 3 + i * 3
-            dest_id = int(parts[idx])
-            next_hop = int(parts[idx + 1])
-            cost_from_sender = float(parts[idx + 2])
-
-            if dest_id == sender_id:
-                continue
-
-            if dest_id == self.server_id:
-                if self.routing_table[sender_id]['cost'] != cost_from_sender:
-                    self.routing_table[sender_id] = {'next_hop': sender_id, 'cost': cost_from_sender}
+                if new_cost < current_cost:
+                    self.routing_table[dest_id] = {"next_hop": sender_id, "cost": new_cost}
                     updated = True
-                continue
 
-            new_cost = sender_cost + cost_from_sender
-            if dest_id not in self.routing_table or new_cost < self.routing_table[dest_id]['cost']:
-                self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
-                updated = True
-
-        # Reevaluate all direct neighbors to ensure correctness
-        for neighbor_id, neighbor_info in self.neighbors.items():
-            direct_cost = neighbor_info['cost']
-            if self.routing_table[neighbor_id]['cost'] != direct_cost:
-                self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': direct_cost}
-                updated = True
-
-        # Send updates only if there are real changes
-        if updated:
-            print(f"Updated routing table: {self.routing_table}")
-            self.schedule_update()
-        else:
-            print("No updates made to the routing table.")
-
-    def schedule_update(self):
-        """Schedule an update with a debounce mechanism."""
-        current_time = time.time()
-        if current_time - self.last_update_time >= self.update_interval:
-            self.send_update(force=True)
-            self.last_update_time = current_time
-
-    def update_routing_table(self, neighbor_id, new_cost):
-        """Update link cost to a neighbor and adjust routing table."""
-        if neighbor_id in self.neighbors:
-            self.neighbors[neighbor_id]['cost'] = new_cost
-            self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
-            print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
-            print(f"Updated routing table: {self.routing_table}")
-            # Trigger a step update to propagate changes
-            self.step()
-        else:
-            print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
-
-    def step(self):
-        """ Send immediate routing updates """
-        self.send_update()
-        print("step SUCCESS")
-
-    def packets(self):
-        """ Display and reset the number of received packets """
-        print(f"packets: {self.packet_counter}")
-        self.packet_counter = 0
-
-    def display(self):
-        """ Display the current routing table """
-        print("Routing Table:")
-        for dest_id in sorted(self.routing_table.keys()):
-            route = self.routing_table[dest_id]
-            print(f"{dest_id} {route['next_hop']} {route['cost']}")
-        print("display SUCCESS")
+            if updated:
+                print("Routing table updated:")
+                self.display()
+                self.send_update(force=True)
+        except Exception as e:
+            print(f"Failed to process update message: {e}")
 
     def disable(self, neighbor_id):
-        """ Disable the link to a given neighbor """
+        """Disable the link to a given neighbor."""
         if neighbor_id in self.neighbors:
-            self.neighbors[neighbor_id]['cost'] = float('inf')
-            self.routing_table[neighbor_id]['cost'] = float('inf')
-            print(f"disable {neighbor_id} SUCCESS")
+            self.neighbors[neighbor_id]["cost"] = float("inf")
+            self.routing_table[neighbor_id] = {"next_hop": None, "cost": float("inf")}
+            print(f"Disabled connection with neighbor {neighbor_id}")
         else:
-            print(f"disable {neighbor_id} FAILED: Not a neighbor")
+            print(f"Neighbor {neighbor_id} does not exist")
 
-    def crash(self):
-        """ Simulate a server crash by disabling all connections """
-        for neighbor_id in self.neighbors:
-            self.disable(neighbor_id)
-        print("crash SUCCESS")
+    def display(self):
+        """Display the current routing table."""
+        print("Routing Table:")
+        for dest_id, route_info in self.routing_table.items():
+            print(f"{dest_id} via {route_info['next_hop']} cost {route_info['cost']}")
 
-    def run_periodic_updates(self):
-        """ Periodically send routing updates """
-        while self.running:
-            time.sleep(self.update_interval)
-            self.send_update()
+    def run(self):
+        """Start server."""
+        threading.Thread(target=self.listen_for_updates, daemon=True).start()
+        self.handle_commands()
 
     def handle_commands(self):
-        """ Continuously read user commands from the terminal """
-        try:
-            while self.running:
+        """Handle user commands."""
+        while self.running:
+            try:
                 command = input("Enter command: ").strip().split()
                 if not command:
                     continue
 
                 cmd = command[0].lower()
-                if cmd == "update" and len(command) == 4:
-                    self.update_routing_table(int(command[2]), int(command[3]))
-                elif cmd == "step":
-                    self.step()
-                elif cmd == "packets":
-                    self.packets()
-                elif cmd == "display":
+                if cmd == "display":
                     self.display()
                 elif cmd == "disable" and len(command) == 2:
                     self.disable(int(command[1]))
-                elif cmd == "crash":
-                    self.crash()
+                elif cmd == "step":
+                    self.send_update(force=True)
                 elif cmd == "exit":
                     self.running = False
                 else:
                     print("Invalid command")
-        except KeyboardInterrupt:
-            print("\nCTRL+C pressed. Exiting program...")
-            self.running = False
-
-    def run(self):
-        """ Start server """
-        threading.Thread(target=self.listen_for_updates, daemon=True).start()
-        threading.Thread(target=self.run_periodic_updates, daemon=True).start()
-        self.handle_commands()
+            except KeyboardInterrupt:
+                print("Exiting program")
+                self.running = False
 
 
 def main():
