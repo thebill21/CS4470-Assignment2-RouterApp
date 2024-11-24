@@ -5,6 +5,7 @@ import time
 import json
 import sys
 from collections import defaultdict
+from threading import Lock
 
 # Globals
 time_interval = 0
@@ -19,6 +20,7 @@ number_of_packets_received = 0
 next_hop = {}
 read_selector = selectors.DefaultSelector()
 write_selector = selectors.DefaultSelector()
+neighbors_lock = Lock()
 
 
 class Node:
@@ -32,11 +34,17 @@ class Node:
         return hash((self.id, self.ip, self.port))
 
     def __eq__(self, other):
-        return (self.id, self.ip, self.port) == (other.id, other.ip, other.port)
+        return (self.id, self.ip, self.port) == (other.id, other.ip)
+
+
+def get_my_ip():
+    """Get the current machine's IP address."""
+    return socket.gethostbyname(socket.gethostname())
 
 
 def main():
     global my_ip, time_interval
+    my_ip = get_my_ip()
 
     # Main loop to process commands
     while True:
@@ -142,6 +150,7 @@ def read_topology(filename):
         print("Topology file read successfully.")
     except Exception as e:
         print(f"Error reading topology file: {e}")
+        sys.exit(1)
 
 
 def get_node_by_id(node_id):
@@ -154,29 +163,31 @@ def get_node_by_id(node_id):
 
 def update(server_id1, server_id2, cost):
     """Updates the link cost between two servers."""
-    if server_id1 == my_id or server_id2 == my_id:
-        target_id = server_id2 if server_id1 == my_id else server_id1
-        target_node = get_node_by_id(target_id)
-        if target_node in neighbors:
-            routing_table[target_node] = cost
-            print(f"Updated cost to {target_id} to {cost}")
-            step()
+    with neighbors_lock:
+        if server_id1 == my_id or server_id2 == my_id:
+            target_id = server_id2 if server_id1 == my_id else server_id1
+            target_node = get_node_by_id(target_id)
+            if target_node in neighbors:
+                routing_table[target_node] = cost
+                print(f"Updated cost to {target_id} to {cost}")
+                step()
+            else:
+                print("Can only update the cost to neighbors.")
         else:
-            print("Can only update the cost to neighbors.")
-    else:
-        print("This server is not involved in the specified link.")
+            print("This server is not involved in the specified link.")
 
 
 def step():
     """Sends a routing update to all neighbors."""
-    if neighbors:
-        message = make_message()
-        for neighbor in neighbors:
-            send_message(neighbor, message)
-            print(f"Message sent to {neighbor.ip}.")
-        print("Step completed.")
-    else:
-        print("No neighbors to send updates to.")
+    with neighbors_lock:
+        if neighbors:
+            message = make_message()
+            for neighbor in neighbors:
+                send_message(neighbor, message)
+                print(f"Message sent to {neighbor.ip}.")
+            print("Step completed.")
+        else:
+            print("No neighbors to send updates to.")
 
 
 def make_message():
@@ -195,6 +206,24 @@ def send_message(neighbor, message):
         print(f"Error sending message to {neighbor.ip}: {e}")
 
 
+def process_message(message):
+    """Processes incoming routing updates."""
+    global routing_table, next_hop
+    try:
+        received_table = json.loads(message)
+        updated = False
+        for node_id, cost in received_table.items():
+            target_node = get_node_by_id(node_id)
+            if target_node and cost < routing_table.get(target_node, float('inf')):
+                routing_table[target_node] = cost
+                next_hop[target_node] = target_node
+                updated = True
+        if updated:
+            print("Routing table updated.")
+    except Exception as e:
+        print(f"Error processing message: {e}")
+
+
 def display():
     """Displays the routing table."""
     print("Destination\tNext Hop\tCost")
@@ -208,21 +237,23 @@ def display():
 
 def disable(server_id):
     """Disables a link to a specific neighbor."""
-    target_node = get_node_by_id(server_id)
-    if target_node in neighbors:
-        neighbors.remove(target_node)
-        routing_table[target_node] = float('inf')
-        next_hop[target_node] = None
-        print(f"Disabled connection with server {server_id}.")
-    else:
-        print("Cannot disable a non-neighbor link.")
+    with neighbors_lock:
+        target_node = get_node_by_id(server_id)
+        if target_node in neighbors:
+            neighbors.remove(target_node)
+            routing_table[target_node] = float('inf')
+            next_hop[target_node] = None
+            print(f"Disabled connection with server {server_id}.")
+        else:
+            print("Cannot disable a non-neighbor link.")
 
 
 def crash():
     """Simulates a server crash by disabling all links."""
-    for neighbor in list(neighbors):
-        disable(neighbor.id)
-    print("Server crashed.")
+    with neighbors_lock:
+        for neighbor in list(neighbors):
+            disable(neighbor.id)
+        print("Server crashed.")
 
 
 if __name__ == "__main__":
