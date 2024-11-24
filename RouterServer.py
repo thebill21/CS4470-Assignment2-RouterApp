@@ -286,4 +286,4 @@ def get_node_by_id(node_id):
 
 
 if __name__ == "__main__":
-    main(
+    main()
