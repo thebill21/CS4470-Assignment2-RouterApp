@@ -60,8 +60,7 @@ class Router:
 
     def send_update(self, force=False):
         """Send distance vector updates to all neighbors."""
-        current_time = time.time()
-        if not force and current_time - self.last_update_time < self.update_interval:
+        if not force and time.time() - self.last_update_time < self.update_interval:
             return  # Throttle updates based on update_interval
 
         update_message = self.create_update_message()
@@ -72,7 +71,7 @@ class Router:
             print(f"Sent update to Server {neighbor_id} at {neighbor_ip}:{neighbor_port}")
             print(f"Update content: {update_message}")
 
-        self.last_update_time = current_time  # Update the last update timestamp
+        self.last_update_time = time.time()  # Update the last update timestamp
 
     def create_update_message(self):
         """ Create a message to send the routing table to neighbors """
@@ -120,11 +119,9 @@ class Router:
         updated = False
 
         # Reevaluate the direct cost to this neighbor
-        if self.neighbors[sender_id]['cost'] != sender_cost:
-            self.routing_table[sender_id] = {
-                'next_hop': sender_id,
-                'cost': self.neighbors[sender_id]['cost']
-            }
+        direct_cost = self.neighbors[sender_id]['cost']
+        if direct_cost != sender_cost:
+            self.routing_table[sender_id] = {'next_hop': sender_id, 'cost': direct_cost}
             updated = True
 
         for i in range(num_entries):
@@ -147,28 +144,36 @@ class Router:
                 self.routing_table[dest_id] = {'next_hop': sender_id, 'cost': new_cost}
                 updated = True
 
-        # Check all direct neighbors for potential updates
+        # Reevaluate all direct neighbors to ensure correctness
         for neighbor_id, neighbor_info in self.neighbors.items():
             direct_cost = neighbor_info['cost']
             if self.routing_table[neighbor_id]['cost'] != direct_cost:
                 self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': direct_cost}
                 updated = True
 
+        # Send updates only if there are real changes
         if updated:
             print(f"Updated routing table: {self.routing_table}")
-            self.send_update(force=True)  # Force update propagation when changes occur
+            self.schedule_update()
         else:
             print("No updates made to the routing table.")
 
+    def schedule_update(self):
+        """Schedule an update with a debounce mechanism."""
+        current_time = time.time()
+        if current_time - self.last_update_time >= self.update_interval:
+            self.send_update(force=True)
+            self.last_update_time = current_time
+
     def update_routing_table(self, neighbor_id, new_cost):
-        """ Update link cost to a neighbor and adjust routing table """
+        """Update link cost to a neighbor and adjust routing table."""
         if neighbor_id in self.neighbors:
             self.neighbors[neighbor_id]['cost'] = new_cost
             self.routing_table[neighbor_id] = {'next_hop': neighbor_id, 'cost': new_cost}
             print(f"Updated neighbor {neighbor_id} cost to {new_cost}")
             print(f"Updated routing table: {self.routing_table}")
-            # Propagate changes immediately
-            self.send_update()
+            # Trigger a step update to propagate changes
+            self.step()
         else:
             print(f"update {self.server_id} {neighbor_id} FAILED: Not a neighbor")
 
