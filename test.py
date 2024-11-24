@@ -110,37 +110,51 @@ def read_topology(filename):
         num_servers = int(lines[0])
         num_neighbors = int(lines[1])
 
+        # Read servers
         for i in range(2, 2 + num_servers):
             parts = lines[i].split()
-            node = Node(int(parts[0]), parts[1], int(parts[2]))
+            node_id, ip, port = int(parts[0]), parts[1], int(parts[2])
+            node = Node(node_id, ip, port)
             nodes.append(node)
+            print(f"Added node: {node_id} -> {ip}:{port}")
+            
             cost = float('inf')
-            if parts[1] == my_ip:
-                my_id = node.id
+            if ip == my_ip:
+                my_id = node_id
                 my_node = node
                 cost = 0
                 next_hop[node] = node
+                print(f"Set as my node: {node_id}")
             else:
                 next_hop[node] = None
             routing_table[node] = cost
 
-        for i in range(2 + num_servers, 2 + num_neighbors + 2):
+        # Read neighbors
+        for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
             parts = lines[i].split()
             from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
+            print(f"Topology entry: {from_id} -> {to_id}, cost: {cost}")
+
             if from_id == my_id:
                 neighbor_node = get_node_by_id(to_id)
-                routing_table[neighbor_node] = cost
-                neighbors.add(neighbor_node)
-                next_hop[neighbor_node] = neighbor_node
+                if neighbor_node:
+                    routing_table[neighbor_node] = cost
+                    neighbors.add(neighbor_node)
+                    next_hop[neighbor_node] = neighbor_node
+                    print(f"Added neighbor: {to_id}")
             elif to_id == my_id:
                 neighbor_node = get_node_by_id(from_id)
-                routing_table[neighbor_node] = cost
-                neighbors.add(neighbor_node)
-                next_hop[neighbor_node] = neighbor_node
+                if neighbor_node:
+                    routing_table[neighbor_node] = cost
+                    neighbors.add(neighbor_node)
+                    next_hop[neighbor_node] = neighbor_node
+                    print(f"Added neighbor: {from_id}")
 
         print("Topology file read successfully.")
+        print(f"My ID: {my_id}, Neighbors: {[n.id for n in neighbors]}")
     except Exception as e:
         print(f"Error reading topology file: {e}")
+        sys.exit(1)
 
 
 def setup_listener():
