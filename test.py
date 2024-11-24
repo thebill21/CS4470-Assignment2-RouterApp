@@ -1,9 +1,8 @@
 import socket
-import selectors
 import threading
 import time
-import sys
 import json
+import sys
 
 
 class Router:
@@ -18,10 +17,11 @@ class Router:
         self.packet_counter = 0
         self.running = True
         self.missed_updates = {}  # Initialize missed updates dictionary
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.load_topology(topology_file)
         self.sock.bind((self.ip, self.port))
+        self.sock.listen(5)
         self.last_update_time = time.time()  # Initialize the last update timestamp
 
     def load_topology(self, topology_file):
@@ -77,6 +77,29 @@ class Router:
             except Exception as e:
                 print(f"Failed to connect to neighbor {neighbor_id}: {e}")
 
+    def listen_for_updates(self):
+        """Listen for incoming updates from neighbors."""
+        while self.running:
+            try:
+                client_sock, _ = self.sock.accept()
+                threading.Thread(target=self.handle_incoming_message, args=(client_sock,), daemon=True).start()
+            except Exception as e:
+                if not self.running:
+                    break
+                print(f"Error in listen_for_updates: {e}")
+
+    def handle_incoming_message(self, client_sock):
+        """Handle an incoming message from a neighbor."""
+        try:
+            data = client_sock.recv(1024)
+            if data:
+                self.process_update_message(data.decode())
+                self.packet_counter += 1
+        except Exception as e:
+            print(f"Error processing incoming message: {e}")
+        finally:
+            client_sock.close()
+
     def send_update(self, force=False):
         """Send distance vector updates to all neighbors."""
         if not force and time.time() - self.last_update_time < self.update_interval:
@@ -96,19 +119,6 @@ class Router:
         """Create a message to send the routing table to neighbors."""
         message = {"server_id": self.server_id, "routing_table": self.routing_table}
         return json.dumps(message)
-
-    def listen_for_updates(self):
-        """Listen for incoming updates from other routers."""
-        while self.running:
-            try:
-                data, addr = self.sock.recvfrom(1024)
-                print(f"Received message from {addr}")
-                self.process_update_message(data.decode())
-                self.packet_counter += 1
-            except socket.error as e:
-                if not self.running:
-                    break
-                print(f"Socket error: {e}")
 
     def process_update_message(self, message):
         """Process incoming routing table updates."""
@@ -136,17 +146,41 @@ class Router:
     def disable(self, neighbor_id):
         """Disable the link to a given neighbor."""
         if neighbor_id in self.neighbors:
-            self.neighbors[neighbor_id]["cost"] = float("inf")
-            self.routing_table[neighbor_id] = {"next_hop": None, "cost": float("inf")}
-            print(f"Disabled connection with neighbor {neighbor_id}")
+            # Remove the neighbor from neighbors list
+            self.neighbors.pop(neighbor_id)
+            # Mark the routing table entry as infinite cost
+            if neighbor_id in self.routing_table:
+                self.routing_table[neighbor_id]['cost'] = float('inf')
+                self.routing_table[neighbor_id]['next_hop'] = None
+            # Close the connection if it exists
+            if neighbor_id in self.open_channels:
+                try:
+                    self.open_channels[neighbor_id].close()
+                except Exception as e:
+                    print(f"Failed to close connection with neighbor {neighbor_id}: {e}")
+                del self.open_channels[neighbor_id]
+            print(f"Disabled connection with neighbor {neighbor_id}.")
         else:
-            print(f"Neighbor {neighbor_id} does not exist")
+            print(f"Cannot disable non-existent neighbor {neighbor_id}.")
+
+    def crash(self):
+        """Simulate a server crash by disabling all connections."""
+        self.running = False
+        for channel in self.open_channels.values():
+            try:
+                channel.close()
+            except Exception as e:
+                print(f"Error closing channel: {e}")
+        self.open_channels.clear()
+        print("Server crashed. All connections closed.")
 
     def display(self):
         """Display the current routing table."""
         print("Routing Table:")
         for dest_id, route_info in self.routing_table.items():
-            print(f"{dest_id} via {route_info['next_hop']} cost {route_info['cost']}")
+            next_hop = route_info['next_hop']
+            cost = route_info['cost']
+            print(f"Destination: {dest_id}, Next Hop: {next_hop}, Cost: {cost}")
 
     def run(self):
         """Start server."""
@@ -157,6 +191,15 @@ class Router:
         """Handle user commands."""
         while self.running:
             try:
+                print("\n********* Distance Vector Routing Protocol **********")
+                print("Help Menu")
+                print("--> Commands you can use")
+                print("1. server <topology-file> -i <time-interval-in-seconds>")
+                print("2. update <server-id1> <server-id2> <new-cost>")
+                print("3. step")
+                print("4. display")
+                print("5. disable <server-id>")
+                print("6. crash")
                 command = input("Enter command: ").strip().split()
                 if not command:
                     continue
@@ -168,8 +211,9 @@ class Router:
                     self.disable(int(command[1]))
                 elif cmd == "step":
                     self.send_update(force=True)
-                elif cmd == "exit":
-                    self.running = False
+                elif cmd == "crash":
+                    self.crash()
+                    break
                 else:
                     print("Invalid command")
             except KeyboardInterrupt:
