@@ -25,6 +25,7 @@ class Router:
         self.my_ip = self.get_my_ip()
         self.my_id = None
         self.my_node = None
+        self.nodes = []  # Initialize self.nodes here
         self.topology_file = topology_file
         self.update_interval = update_interval
         self.routing_table = {}
@@ -41,14 +42,18 @@ class Router:
         print("Initialization complete.\n")
 
     def get_my_ip(self):
-        """Get the current machine's IP address."""
+        """Get the machine's local IP address."""
         try:
-            ip = socket.gethostbyname(socket.gethostname())
-            print(f"Local IP address determined: {ip}")
-            return ip
+            # Create a dummy socket connection to an external server to determine local IP
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                # Google's public DNS server is used here to determine the network interface
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+            print(f"Local IP address determined: {local_ip}")
+            return local_ip
         except Exception as e:
-            print(f"Error getting local IP: {e}")
-            return None
+            print(f"Error determining local IP address: {e}")
+            return "127.0.0.1"  # Fallback to localhost if detection fails
 
     def load_topology(self):
         """Reads the topology file and initializes routing tables."""
