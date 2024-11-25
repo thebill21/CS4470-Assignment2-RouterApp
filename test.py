@@ -34,15 +34,25 @@ class Router:
         self.running = True
         self.lock = threading.Lock()
 
-        # Load the topology
+        print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
+        # Load topology and connect to neighbors
         self.load_topology()
+        self.connect_neighbors()
+        print("Initialization complete.\n")
 
     def get_my_ip(self):
-        """Gets the current machine's IP address."""
-        return socket.gethostbyname(socket.gethostname())
+        """Get the current machine's IP address."""
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+            print(f"Local IP address determined: {ip}")
+            return ip
+        except Exception as e:
+            print(f"Error getting local IP: {e}")
+            return None
 
     def load_topology(self):
         """Reads the topology file and initializes routing tables."""
+        print(f"Loading topology from file: {self.topology_file}")
         try:
             with open(self.topology_file, 'r') as f:
                 lines = f.read().strip().split('\n')
@@ -52,37 +62,54 @@ class Router:
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
-                self.routing_table[node] = float('inf')
                 if parts[1] == self.my_ip:
                     self.my_id = node.id
                     self.my_node = node
-                    self.routing_table[node] = 0
-                    self.next_hop[node] = node
+                    self.routing_table[node.id] = 0
+                    self.next_hop[node.id] = node.id
+                else:
+                    self.routing_table[node.id] = float('inf')
+                    self.next_hop[node.id] = None
+                print(f"Loaded server {node.id}: IP={node.ip}, Port={node.port}")
 
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
                 if from_id == self.my_id:
-                    neighbor_node = self.get_node_by_id(to_id)
-                    self.routing_table[neighbor_node] = cost
-                    self.neighbors.add(neighbor_node)
-                    self.next_hop[neighbor_node] = neighbor_node
+                    self.neighbors.add(to_id)
+                    self.routing_table[to_id] = cost
+                    self.next_hop[to_id] = to_id
                 elif to_id == self.my_id:
-                    neighbor_node = self.get_node_by_id(from_id)
-                    self.routing_table[neighbor_node] = cost
-                    self.neighbors.add(neighbor_node)
-                    self.next_hop[neighbor_node] = neighbor_node
+                    self.neighbors.add(from_id)
+                    self.routing_table[from_id] = cost
+                    self.next_hop[from_id] = from_id
+                print(f"Link loaded: {from_id} <-> {to_id} with cost {cost}")
 
-            print("Topology loaded successfully.")
+            print("Topology loaded successfully.\n")
         except Exception as e:
-            print(f"Error reading topology file: {e}")
-            exit(1)
+            print(f"Error loading topology: {e}")
+
+    def connect_neighbors(self):
+        """Attempts to connect to all neighbors."""
+        print("Attempting to connect to neighbors...")
+        for neighbor_id in self.neighbors:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor:
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.connect((neighbor.ip, neighbor.port))
+                        print(f"Successfully connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
+                except Exception as e:
+                    print(f"Failed to connect to neighbor {neighbor_id} at {neighbor.ip}:{neighbor.port}: {e}")
+            else:
+                print(f"Neighbor {neighbor_id} not found in topology.")
 
     def get_node_by_id(self, node_id):
         """Fetches a node by its ID."""
-        for node in self.routing_table.keys():
+        for node in self.nodes:
             if node.id == node_id:
                 return node
+        print(f"Node {node_id} not found.")
         return None
 
     def update(self, server_id1, server_id2, cost):
@@ -90,9 +117,8 @@ class Router:
         with self.lock:
             if server_id1 == self.my_id or server_id2 == self.my_id:
                 target_id = server_id2 if server_id1 == self.my_id else server_id1
-                target_node = self.get_node_by_id(target_id)
-                if target_node in self.neighbors:
-                    self.routing_table[target_node] = cost
+                if target_id in self.neighbors:
+                    self.routing_table[target_id] = cost
                     print(f"Updated cost to {target_id} to {cost}")
                     self.step()
                 else:
@@ -104,64 +130,65 @@ class Router:
         """Sends a routing update to all neighbors."""
         with self.lock:
             if self.neighbors:
+                print("Sending updates to neighbors...")
                 message = self.make_message()
-                for neighbor in self.neighbors:
-                    self.send_message(neighbor, message)
-                print("Step completed.")
+                for neighbor_id in self.neighbors:
+                    neighbor = self.get_node_by_id(neighbor_id)
+                    if neighbor:
+                        self.send_message(neighbor, message)
+                print("Step completed.\n")
             else:
-                print("No neighbors to send updates to.")
+                print("No neighbors to send updates to.\n")
 
     def make_message(self):
         """Creates a routing table message."""
-        message = {node.id: cost for node, cost in self.routing_table.items()}
+        message = {"id": self.my_id, "routing_table": self.routing_table}
+        print(f"Message created: {message}")
         return json.dumps(message)
 
-    def send_message(self, neighbor, message, retries=3):
-        """Sends a message to a neighbor with retries."""
-        attempt = 0
-        while attempt < retries:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.connect((neighbor.ip, neighbor.port))
-                    s.sendall(message.encode())
-                    print(f"Message successfully sent to {neighbor.ip}.")
-                    return
-            except Exception as e:
-                attempt += 1
-                print(f"Attempt {attempt}: Error sending message to {neighbor.ip}: {e}")
-                time.sleep(1)
-        print(f"Failed to send message to {neighbor.ip} after {retries} attempts.")
+    def send_message(self, neighbor, message):
+        """Sends a message to a neighbor."""
+        print(f"Sending message to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((neighbor.ip, neighbor.port))
+                s.sendall(message.encode())
+                print(f"Message sent successfully to {neighbor.id}.")
+        except Exception as e:
+            print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
 
     def display_routing_table(self):
-        """Displays the routing table with better formatting."""
-        print(f"{'Destination':<15}{'Next Hop':<15}{'Cost':<10}")
-        print("-" * 40)
-        for node in sorted(self.routing_table.keys(), key=lambda n: n.id):
-            cost = self.routing_table[node]
-            next_hop_node = self.next_hop.get(node)
-            next_hop_id = next_hop_node.id if next_hop_node else "None"
-            cost_str = "infinity" if cost == float("inf") else cost
-            print(f"{node.id:<15}{next_hop_id:<15}{cost_str:<10}")
+        """Displays the routing table."""
+        print("\nRouting Table:")
+        print("Destination    Next Hop       Cost")
+        print("----------------------------------")
+        for dest_id in sorted(self.routing_table.keys()):
+            next_hop = self.next_hop.get(dest_id, None)
+            cost = self.routing_table[dest_id]
+            next_hop_str = next_hop if next_hop is not None else "None"
+            cost_str = "infinity" if cost == float('inf') else cost
+            print(f"{dest_id:<14} {next_hop_str:<14} {cost_str}")
+        print()
 
     def disable(self, server_id):
         """Disables a link to a specific neighbor."""
         with self.lock:
-            target_node = self.get_node_by_id(server_id)
-            if target_node in self.neighbors:
-                self.neighbors.remove(target_node)
-                self.routing_table[target_node] = float('inf')
-                self.next_hop[target_node] = None
+            if server_id in self.neighbors:
+                self.neighbors.remove(server_id)
+                self.routing_table[server_id] = float('inf')
+                self.next_hop[server_id] = None
                 print(f"Disabled connection with server {server_id}.")
             else:
                 print("Cannot disable a non-neighbor link.")
 
     def crash(self):
         """Simulates a server crash by disabling all links."""
+        print("Simulating server crash. Disabling all links...")
         with self.lock:
-            for neighbor in list(self.neighbors):
-                self.disable(neighbor.id)
             self.running = False
-            print("Server crashed.")
+            for neighbor_id in list(self.neighbors):
+                self.disable(neighbor_id)
+            print("Server has crashed. All links disabled.\n")
 
     def periodic_updates(self):
         """Sends periodic updates to neighbors."""
@@ -198,16 +225,18 @@ class Router:
 
 if __name__ == "__main__":
     print("********* Distance Vector Routing Protocol **********")
-    print("Help Menu")
-    print("--> Commands you can use")
-    print("1. server <topology-file> -i <time-interval-in-seconds>")
-    print("2. update <server-id1> <server-id2> <new-cost>")
-    print("3. step")
-    print("4. display")
-    print("5. disable <server-id>")
-    print("6. crash")
-    
-    topology_file = input("Enter topology file name: ")
-    update_interval = int(input("Enter update interval in seconds: "))
-    router = Router(topology_file, update_interval)
-    router.run()
+    print("Use: server -t <topology-file-name> -i <routing-update-interval>")
+    command = input("Enter server command: ").strip().split()
+    if len(command) == 5 and command[0] == "server" and command[1] == "-t" and command[3] == "-i":
+        topology_file = command[2]
+        try:
+            update_interval = int(command[4])
+            if update_interval >= 5:
+                router = Router(topology_file, update_interval)
+                router.run()
+            else:
+                print("Routing update interval must be at least 5 seconds.")
+        except ValueError:
+            print("Invalid routing update interval. Please enter a valid integer.")
+    else:
+        print("Invalid command. Use the format: server -t <topology-file-name> -i <routing-update-interval>")
