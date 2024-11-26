@@ -118,8 +118,15 @@ class Router:
         """Handle an incoming client connection."""
         try:
             message = client_socket.recv(1024).decode()
-            print(f"Received message: {message}")
-            self.process_message(json.loads(message))
+            if not message.strip():  # Check for empty or whitespace-only message
+                print("Received empty message from client.")
+                return
+            print(f"Received raw message: {message}")
+            try:
+                json_message = json.loads(message)
+                self.process_message(json_message)
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON message: {e}")
         except Exception as e:
             print(f"Error handling client: {e}")
         finally:
@@ -152,7 +159,33 @@ class Router:
     def process_message(self, message):
         """Process incoming routing table updates."""
         print(f"Processing message: {message}")
-        # Add message processing logic here
+        if not isinstance(message, dict):
+            print("Received invalid message format. Expected a dictionary.")
+            return
+
+        # Add logic to process valid routing table messages
+        sender_id = message.get("id")
+        routing_table = message.get("routing_table")
+
+        if sender_id is None or routing_table is None:
+            print("Message missing required fields: 'id' or 'routing_table'.")
+            return
+
+        print(f"Received update from Server {sender_id}: {routing_table}")
+        # Implement routing table update logic here
+
+    def send_message(self, neighbor, message):
+        """Sends a message to a neighbor."""
+        print(f"Sending message to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((neighbor.ip, neighbor.port))
+                formatted_message = json.dumps(message)
+                print(f"Sending formatted JSON message: {formatted_message}")
+                s.sendall(formatted_message.encode())
+                print(f"Message sent successfully to {neighbor.id}.")
+        except Exception as e:
+            print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
 
     def run(self):
         """Run the router to process commands."""
@@ -187,8 +220,17 @@ class Router:
             print(f"{dest_id}\t\t{next_hop}\t\t{cost}")
 
     def step(self):
-        """Manually send routing updates."""
-        print("Sending updates to neighbors.")
+        """Manually send routing updates to neighbors."""
+        print("Sending updates to neighbors...")
+        message = {
+            "id": self.my_id,
+            "routing_table": self.routing_table
+        }
+        for neighbor_id in self.neighbors:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor:
+                self.send_message(neighbor, message)
+        print("Routing updates sent.")
 
     def crash(self):
         """Simulate a crash."""
