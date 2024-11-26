@@ -171,26 +171,29 @@ class Router:
         self.number_of_packets_received += 1  # Increment for each received packet
         print(f"Processing message: {message}")
         sender_id = message.get("id")
-        routing_table = message.get("routing_table")
+        received_table = message.get("routing_table")
 
-        if sender_id is None or routing_table is None:
+        if sender_id is None or received_table is None:
             print("Message missing required fields: 'id' or 'routing_table'.")
             return
 
         updated = False
         with self.lock:
-            for dest_id, received_cost in routing_table.items():
+            sender_cost = self.routing_table.get(sender_id, float('inf'))
+            for dest_id, received_cost in received_table.items():
                 if dest_id == self.my_id:
                     continue
-                new_cost = self.routing_table[sender_id] + received_cost
-                if new_cost < self.routing_table.get(dest_id, float('inf')):
+                new_cost = sender_cost + received_cost
+                current_cost = self.routing_table.get(dest_id, float('inf'))
+                if new_cost < current_cost:
+                    print(f"Updating route to {dest_id}: cost {current_cost} -> {new_cost}, next hop: {sender_id}")
                     self.routing_table[dest_id] = new_cost
                     self.next_hop[dest_id] = sender_id
                     updated = True
 
         if updated:
             print("Routing table updated based on received message.")
-            self.display_routing_table()
+            self.step()
 
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor."""
@@ -207,11 +210,16 @@ class Router:
 
     def display_routing_table(self):
         """Display the routing table."""
-        print("Routing Table:")
+        print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
-        for dest_id, cost in self.routing_table.items():
+        print("--------------------------------")
+        for dest_id, cost in sorted(self.routing_table.items()):
             next_hop = self.next_hop.get(dest_id, None)
-            print(f"{dest_id}\t\t{next_hop}\t\t{cost}")
+            next_hop_str = next_hop if next_hop is not None else "None"
+            cost_str = "infinity" if cost == float('inf') else cost
+            print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
+        print()
+
 
     def step(self):
         """Manually send routing updates to neighbors."""
@@ -285,6 +293,8 @@ class Router:
     def display_packets(self):
         """Display the number of packets received."""
         print(f"Number of packets received: {self.number_of_packets_received}")
+        # Optionally, reset the counter if required:
+        # self.number_of_packets_received = 0
 
 
 if __name__ == "__main__":
