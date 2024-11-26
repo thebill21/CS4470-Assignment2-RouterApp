@@ -213,7 +213,7 @@ class Router:
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
-        for dest_id, cost in sorted(self.routing_table.items()):
+        for dest_id, cost in sorted(self.routing_table.items(), key=lambda x: int(x[0]) if isinstance(x[0], (int, str)) else x[0]):
             next_hop = self.next_hop.get(dest_id, None)
             next_hop_str = next_hop if next_hop is not None else "None"
             cost_str = "infinity" if cost == float('inf') else cost
