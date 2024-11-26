@@ -170,8 +170,8 @@ class Router:
         """Process incoming routing table updates."""
         self.number_of_packets_received += 1  # Increment for each received packet
         print(f"Processing message: {message}")
-        sender_id = message.get("id")
-        received_table = message.get("routing_table")
+        sender_id = int(message.get("id"))  # Ensure sender_id is an integer
+        received_table = {int(k): v for k, v in message.get("routing_table", {}).items()}  # Convert keys to integers
 
         if sender_id is None or received_table is None:
             print("Message missing required fields: 'id' or 'routing_table'.")
@@ -218,7 +218,7 @@ class Router:
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
         seen = set()
-        for dest_id in sorted(self.routing_table.keys()):
+        for dest_id in sorted(self.routing_table.keys(), key=int):  # Ensure sorted by integer
             if dest_id in seen:
                 continue  # Skip duplicate entries
             seen.add(dest_id)
