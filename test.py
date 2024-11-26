@@ -187,10 +187,18 @@ class Router:
             for dest_id, cost_to_dest in received_table.items():
                 if dest_id == self.my_id:
                     continue
-                # Calculate new cost via sender
+
+                # Calculate the cost to destination via the sender
                 cost_to_sender = self.routing_table.get(sender_id, float('inf'))
                 new_cost = cost_to_sender + cost_to_dest
+
+                # Append this route to all_routes
                 self.all_routes[dest_id].append((sender_id, new_cost))
+
+            # Remove duplicates and sort by cost for each destination
+            for dest_id, routes in self.all_routes.items():
+                unique_routes = list({(next_hop, cost) for next_hop, cost in routes})
+                self.all_routes[dest_id] = sorted(unique_routes, key=lambda x: x[1])  # Sort by cost
 
             self.update_routing_table()
 
@@ -212,7 +220,7 @@ class Router:
         print(f"Failed to send message to {neighbor.id} after 3 attempts.")
 
     def display_routing_table(self):
-        """Display the routing table."""
+        """Display the routing table with only the shortest path."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
@@ -317,8 +325,10 @@ class Router:
             if server1_id == self.my_id or server2_id == self.my_id:
                 target_id = server2_id if server1_id == self.my_id else server1_id
                 self.routing_table[target_id] = new_cost
-                # Update all_routes for the specific link
+
+                # Update all_routes for this link
                 self.all_routes[target_id] = [(target_id, new_cost)]
+
                 print(f"Updated cost to server {target_id} to {new_cost}")
                 self.update_routing_table()
             else:
@@ -334,16 +344,19 @@ class Router:
         """Handle a node crash by updating routing table."""
         print(f"Node {crashed_node} detected as disconnected. Updating routes...")
         with self.lock:
-            for dest_id in self.routing_table.keys():
+            for dest_id in list(self.routing_table.keys()):
                 # Remove all routes through the crashed node
-                self.all_routes[dest_id] = [(cost, hop) for cost, hop in self.all_routes[dest_id] if hop != crashed_node]
+                self.all_routes[dest_id] = [
+                    (next_hop, cost) for next_hop, cost in self.all_routes[dest_id] if next_hop != crashed_node
+                ]
                 if self.next_hop.get(dest_id) == crashed_node:
-                    # If the shortest route uses the crashed node, set cost to infinity or use alternative routes
+                    # If the shortest route uses the crashed node, recalculate
                     if self.all_routes[dest_id]:
-                        new_cost, new_hop = self.all_routes[dest_id][0]
-                        self.routing_table[dest_id] = new_cost
-                        self.next_hop[dest_id] = new_hop
+                        best_next_hop, min_cost = self.all_routes[dest_id][0]
+                        self.routing_table[dest_id] = min_cost
+                        self.next_hop[dest_id] = best_next_hop
                     else:
+                        # No alternative routes; set cost to infinity
                         self.routing_table[dest_id] = float('inf')
                         self.next_hop[dest_id] = None
             self.display_routing_table()
