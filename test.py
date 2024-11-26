@@ -337,6 +337,10 @@ class Router:
                         self.routing_table[target_id] = new_cost
                         self.next_hop[target_id] = target_id
 
+                        # Reconnect to neighbors after an update
+                        print("Re-establishing connections to neighbors...")
+                        self.connect_neighbors()
+
                         # Trigger full re-evaluation and propagate changes
                         self.recalculate_routes()
                         self.step()
