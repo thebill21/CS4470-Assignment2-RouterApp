@@ -179,21 +179,20 @@ class Router:
 
         updated = False
         with self.lock:
-            sender_cost = self.routing_table.get(sender_id, float('inf'))
             for dest_id, received_cost in received_table.items():
                 if dest_id == self.my_id:
                     continue
-                new_cost = sender_cost + received_cost
-                current_cost = self.routing_table.get(dest_id, float('inf'))
-                if new_cost < current_cost:
-                    print(f"Updating route to {dest_id}: cost {current_cost} -> {new_cost}, next hop: {sender_id}")
+                new_cost = self.routing_table.get(sender_id, float('inf')) + received_cost
+                if new_cost < self.routing_table.get(dest_id, float('inf')):
+                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
                     self.routing_table[dest_id] = new_cost
                     self.next_hop[dest_id] = sender_id
                     updated = True
 
         if updated:
             print("Routing table updated based on received message.")
-            self.step()
+            self.display_routing_table()
+            self.step()  # Send updates to neighbors after a change
 
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor."""
@@ -213,8 +212,9 @@ class Router:
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
-        for dest_id, cost in sorted(self.routing_table.items(), key=lambda x: int(x[0]) if isinstance(x[0], (int, str)) else x[0]):
+        for dest_id in sorted(self.routing_table.keys()):
             next_hop = self.next_hop.get(dest_id, None)
+            cost = self.routing_table[dest_id]
             next_hop_str = next_hop if next_hop is not None else "None"
             cost_str = "infinity" if cost == float('inf') else cost
             print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
@@ -222,7 +222,7 @@ class Router:
 
 
     def step(self):
-        """Manually send routing updates to neighbors."""
+        """Send routing updates to neighbors."""
         print("Sending updates to neighbors...")
         message = {
             "id": self.my_id,
