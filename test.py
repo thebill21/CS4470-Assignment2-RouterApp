@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 import json
+import queue
 from collections import defaultdict
 
 
@@ -34,13 +35,59 @@ class Router:
         self.running = True
         self.lock = threading.Lock()
         self.number_of_packets_received = 0  # Correctly initialize it here
+        self.update_queue = queue.Queue()  # Queue for scheduling updates
+        self.step_in_progress = False  # Track step execution
 
         print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
         self.start_listening()
         self.start_periodic_updates()
         self.connect_neighbors()
+        self.start_step_processor()  # Start step processor thread
         print("Initialization complete.\n")
+
+    def start_step_processor(self):
+        """Start a background thread to process step updates."""
+        def process_queue():
+            while self.running:
+                # Block until there's something in the queue
+                try:
+                    self.update_queue.get(timeout=1)  # Wait for an update request
+                    self._process_step()  # Perform the step
+                except queue.Empty:
+                    continue
+
+        threading.Thread(target=process_queue, daemon=True).start()
+
+    def queue_step(self):
+        """Add a step request to the queue."""
+        if not self.step_in_progress:  # Avoid flooding the queue
+            self.update_queue.put(1)
+
+    def _process_step(self):
+        """Process a step request."""
+        if self.step_in_progress:
+            return  # Avoid overlapping executions
+        self.step_in_progress = True
+        try:
+            print("DEBUG: Entering step function...")
+            with self.lock:
+                print("DEBUG: Acquired lock in step function.")
+                message = {
+                    "id": self.my_id,
+                    "routing_table": self.routing_table
+                }
+                for neighbor_id in self.neighbors:
+                    neighbor = self.get_node_by_id(neighbor_id)
+                    if neighbor:
+                        print(f"DEBUG: Sending message to neighbor {neighbor.id}.")
+                        self.send_message(neighbor, message)
+                print("DEBUG: Routing updates sent successfully.")
+        except Exception as e:
+            print(f"Error in step: {e}")
+        finally:
+            self.step_in_progress = False
+            print("DEBUG: Exiting step function.")
 
     def get_my_ip(self):
         """Get the machine's local IP address."""
@@ -163,8 +210,9 @@ class Router:
         """Starts a thread to periodically send updates to neighbors."""
         def periodic_update():
             while self.running:
+                if not self.step_in_progress:  # Avoid overlap
+                    self.step()
                 time.sleep(self.update_interval)
-                self.step()
 
         threading.Thread(target=periodic_update, daemon=True).start()
 
@@ -189,39 +237,25 @@ class Router:
 
         updated = False
         with self.lock:
-            # Check if the sender is a direct neighbor and update the cost explicitly
-            if sender_id in self.neighbors:
-                direct_cost = received_table.get(self.my_id, float('inf'))
-                if direct_cost != self.routing_table[sender_id]:
-                    print(f"Updating direct link to {sender_id}: cost {self.routing_table[sender_id]} -> {direct_cost}")
-                    self.routing_table[sender_id] = direct_cost
-                    self.next_hop[sender_id] = sender_id
-                    updated = True
-
-            # Iterate over all nodes in the received table
             for dest_id, received_cost in received_table.items():
                 if dest_id == self.my_id:  # Skip self
                     continue
 
                 # Calculate new cost via sender
                 cost_to_sender = self.routing_table.get(sender_id, float('inf'))
-                new_cost_via_sender = cost_to_sender + received_cost
+                new_cost = cost_to_sender + received_cost
 
-                # Re-evaluate best cost for this destination
-                current_cost = self.routing_table.get(dest_id, float('inf'))
-                best_cost = min(current_cost, new_cost_via_sender)
-
-                # Update routing table and next hop if necessary
-                if best_cost != current_cost:
-                    self.routing_table[dest_id] = best_cost
-                    self.next_hop[dest_id] = sender_id if best_cost == new_cost_via_sender else self.next_hop[dest_id]
-                    print(f"Updated route to {dest_id}: cost {current_cost} -> {best_cost}, next hop: {self.next_hop[dest_id]}")
+                # Update only if new cost is better
+                if new_cost < self.routing_table.get(dest_id, float('inf')):
+                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
+                    self.routing_table[dest_id] = new_cost
+                    self.next_hop[dest_id] = sender_id
                     updated = True
 
         if updated:
             print("Routing table updated based on received message.")
             self.display_routing_table()
-            self.step()  # Propagate updates to neighbors
+            self.queue_step()  # Queue the step for execution
 
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor with retries."""
@@ -271,20 +305,30 @@ class Router:
 
     def step(self):
         """Send routing updates to neighbors."""
-        print("Sending updates to neighbors...")
+        if self.step_in_progress:
+            print("DEBUG: Skipping step - already in progress.")
+            return
+
+        self.step_in_progress = True
         try:
-            self.lock.acquire()
-            message = {
-                "id": self.my_id,
-                "routing_table": self.routing_table
-            }
-            for neighbor_id in self.neighbors:
-                neighbor = self.get_node_by_id(neighbor_id)
-                if neighbor:
-                    self.send_message(neighbor, message)
-            print("Routing updates sent.")
+            print("DEBUG: Entering step function...")
+            with self.lock:
+                print("DEBUG: Acquired lock in step function.")
+                message = {
+                    "id": self.my_id,
+                    "routing_table": self.routing_table
+                }
+                for neighbor_id in self.neighbors:
+                    neighbor = self.get_node_by_id(neighbor_id)
+                    if neighbor:
+                        print(f"DEBUG: Sending message to neighbor {neighbor.id}.")
+                        self.send_message(neighbor, message)
+                print("DEBUG: Routing updates sent successfully.")
+        except Exception as e:
+            print(f"Error in step: {e}")
         finally:
-            self.lock.release()
+            self.step_in_progress = False
+            print("DEBUG: Exiting step function.")
 
     def disable_link(self, server_id):
         """Disables a link to a neighbor."""
@@ -312,6 +356,7 @@ class Router:
 
         while self.running:
             try:
+                print("DEBUG: Waiting for user input...")
                 command_line = input("Enter command: ").strip().split()
                 if not command_line:
                     continue
@@ -342,27 +387,29 @@ class Router:
     def update(self, server1_id, server2_id, new_cost):
         """Update the cost of a link between two servers."""
         try:
-            self.lock.acquire()
-            if server1_id == self.my_id or server2_id == self.my_id:
-                target_id = server2_id if server1_id == self.my_id else server1_id
-                if target_id in self.neighbors:
-                    print(f"Updating direct link to {target_id}: cost -> {new_cost}")
-                    self.routing_table[target_id] = new_cost
-                    self.next_hop[target_id] = target_id
-
-                    # Trigger full re-evaluation
-                    self.recalculate_routes()
-                    print("Routing table after update:")
-                    self.display_routing_table()
-            else:
-                print("This server is not involved in the specified link.")
+            with self.lock:
+                if server1_id == self.my_id or server2_id == self.my_id:
+                    target_id = server2_id if server1_id == self.my_id else server1_id
+                    if target_id in self.neighbors:
+                        print(f"Updated cost to server {target_id} to {new_cost}")
+                        self.routing_table[target_id] = new_cost
+                        self.next_hop[target_id] = target_id
+                        self.recalculate_routes()
+                        print("Routing table after update:")
+                        self.display_routing_table()
+                    else:
+                        print(f"Cannot update: Server {target_id} is not a direct neighbor.")
+                else:
+                    print("This server is not involved in the specified link.")
         except Exception as e:
             print(f"Error during update: {e}")
         finally:
-            self.lock.release()
+            self.queue_step()  # Queue the step for execution
 
-        # Propagate updates AFTER releasing the lock
-        self.step()
+    def _safe_step(self):
+        """Safely trigger a single step without overlapping."""
+        if not self.step_in_progress:
+            self.step()
 
     def recalculate_routes(self):
         """Recalculate routing table using Bellman-Ford logic."""
