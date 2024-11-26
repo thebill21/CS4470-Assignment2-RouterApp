@@ -28,13 +28,13 @@ class Router:
         self.nodes = []  # Initialize nodes list
         self.topology_file = topology_file
         self.update_interval = update_interval
-        self.routing_table = {}  # {destination: {cost, next_hop}}
-        self.all_routes = defaultdict(list)  # {destination: [(cost, next_hop)]}
+        self.routing_table = {}  # Stores the shortest distance to each destination
+        self.all_routes = defaultdict(list)  # Stores all possible routes and costs
         self.neighbors = set()
+        self.next_hop = {}  # Tracks the next hop for the shortest route
         self.running = True
         self.lock = threading.Lock()
-        self.number_of_packets_received = 0
-        self.next_hop = {}  # Initialize next_hop for storing next hops for destinations
+        self.number_of_packets_received = 0  # Count received packets
 
         print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
@@ -170,40 +170,22 @@ class Router:
 
     def process_message(self, message):
         """Process incoming routing table updates."""
-        self.number_of_packets_received += 1  # Increment for each received packet
-        print(f"Processing message: {message}")
-        sender_id = int(message.get("id"))  # Ensure sender_id is an integer
-        received_table = {int(k): v for k, v in message.get("routing_table", {}).items()}  # Convert keys to integers
+        self.number_of_packets_received += 1
+        sender_id = message["id"]
+        received_table = message["routing_table"]
 
-        if sender_id is None or received_table is None:
-            print("Message missing required fields: 'id' or 'routing_table'.")
-            return
+        print(f"Processing message from {sender_id}: {received_table}")
 
-        updated = False
         with self.lock:
-            for dest_id, received_cost in received_table.items():
+            for dest_id, cost_to_dest in received_table.items():
                 if dest_id == self.my_id:
                     continue
-
                 # Calculate new cost via sender
                 cost_to_sender = self.routing_table.get(sender_id, float('inf'))
-                new_cost = cost_to_sender + received_cost
+                new_cost = cost_to_sender + cost_to_dest
+                self.all_routes[dest_id].append((sender_id, new_cost))
 
-                # Add route to all_routes
-                self.all_routes[dest_id].append((new_cost, sender_id))
-                self.all_routes[dest_id] = sorted(self.all_routes[dest_id], key=lambda x: x[0])
-
-                # Update routing table with the shortest route
-                if new_cost < self.routing_table.get(dest_id, float('inf')):
-                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
-                    self.routing_table[dest_id] = new_cost
-                    self.next_hop[dest_id] = sender_id
-                    updated = True
-
-        if updated:
-            print("Routing table updated based on received message.")
-            self.display_routing_table()
-            self.step()  # Send updates to neighbors after a change
+            self.update_routing_table()
 
 
     def send_message(self, neighbor, message):
@@ -231,6 +213,33 @@ class Router:
             print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
         print()
 
+    def update_routing_table(self):
+        """Recalculate the routing table based on all known routes."""
+        with self.lock:
+            updated = False
+            for dest_id, routes in self.all_routes.items():
+                if dest_id == self.my_id:
+                    continue
+                # Find the route with the minimum cost
+                min_cost = float('inf')
+                best_next_hop = None
+                for next_hop, cost in routes:
+                    if cost < min_cost:
+                        min_cost = cost
+                        best_next_hop = next_hop
+
+                # Update the routing table if there's a change
+                if self.routing_table.get(dest_id, float('inf')) != min_cost:
+                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {min_cost}, next hop: {best_next_hop}")
+                    self.routing_table[dest_id] = min_cost
+                    self.next_hop[dest_id] = best_next_hop
+                    updated = True
+
+            if updated:
+                print("Routing table updated.")
+                self.display_routing_table()
+                self.step()  # Notify neighbors of the updated table
+
 
     def step(self):
         """Send routing updates to neighbors."""
@@ -246,11 +255,14 @@ class Router:
         print("Routing updates sent.")
 
     def crash(self):
-        """Simulate a crash."""
-        print("Simulating a crash. Disabling all connections.")
-        self.running = False
-        for neighbor_id in list(self.neighbors):
-            self.handle_disconnection(neighbor_id)
+        """Handle node crash by marking all routes via that node as unreachable."""
+        print("Simulating server crash. Marking routes as unreachable...")
+        with self.lock:
+            for dest_id, next_hop in list(self.next_hop.items()):
+                if next_hop in self.neighbors:
+                    self.routing_table[dest_id] = float('inf')
+                    self.next_hop[dest_id] = None
+            self.update_routing_table()
 
     def run(self):
         """Run the router to process commands and manage periodic updates."""
@@ -294,13 +306,11 @@ class Router:
         with self.lock:
             if server1_id == self.my_id or server2_id == self.my_id:
                 target_id = server2_id if server1_id == self.my_id else server1_id
-                if target_id in self.neighbors:
-                    self.routing_table[target_id] = new_cost
-                    self.all_routes[target_id] = [(new_cost, target_id)]  # Replace all routes to this neighbor
-                    print(f"Updated cost to server {target_id} to {new_cost}")
-                    self.step()  # Trigger a step update after cost change
-                else:
-                    print("Can only update the cost to direct neighbors.")
+                self.routing_table[target_id] = new_cost
+                # Update all_routes for the specific link
+                self.all_routes[target_id] = [(target_id, new_cost)]
+                print(f"Updated cost to server {target_id} to {new_cost}")
+                self.update_routing_table()
             else:
                 print("This server is not involved in the specified link.")
 
