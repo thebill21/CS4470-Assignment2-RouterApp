@@ -179,6 +179,15 @@ class Router:
 
         updated = False
         with self.lock:
+            # Check if the sender is a direct neighbor and update the cost explicitly
+            if sender_id in self.neighbors:
+                direct_cost = received_table.get(self.my_id, float('inf'))
+                if direct_cost != self.routing_table[sender_id]:
+                    print(f"Updating direct link to {sender_id}: cost {self.routing_table[sender_id]} -> {direct_cost}")
+                    self.routing_table[sender_id] = direct_cost
+                    self.next_hop[sender_id] = sender_id
+                    updated = True
+
             # Iterate over all nodes in the received table
             for dest_id, received_cost in received_table.items():
                 if dest_id == self.my_id:  # Skip self
