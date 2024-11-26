@@ -148,20 +148,27 @@ class Router:
 
     def send_message(self, neighbor, message):
         """Send a message to a specific neighbor."""
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((neighbor.ip, neighbor.port))
-                s.sendall(json.dumps(message).encode())
-        except Exception as e:
-            print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
+        retries = 3
+        while retries > 0:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect((neighbor.ip, neighbor.port))
+                    s.sendall(json.dumps(message).encode())
+                    return
+            except Exception as e:
+                print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
+                retries -= 1
+                time.sleep(1)
+        print(f"Failed to send message to {neighbor.ip}:{neighbor.port} after retries.")
 
     def display_routing_table(self):
         """Display the current routing table."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
-        for dest_id in sorted(self.routing_table.keys()):
+        for dest_id in sorted(map(int, self.routing_table.keys())):  # Ensure keys are sorted as integers
             cost = self.routing_table[dest_id]
-            print(f"{dest_id}\t\t{self.next_hop.get(dest_id, 'None')}\t\t{cost if cost != float('inf') else 'Infinity'}")
+            next_hop = self.next_hop.get(dest_id, "None")
+            print(f"{dest_id}\t\t{next_hop}\t\t{cost if cost != float('inf') else 'Infinity'}")
 
     def run(self):
         """Main loop to process commands."""
