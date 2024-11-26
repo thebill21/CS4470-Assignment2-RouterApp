@@ -271,8 +271,9 @@ class Router:
 
     def step(self):
         """Send routing updates to neighbors."""
-        with self.lock:
-            print("Sending updates to neighbors...")
+        print("Sending updates to neighbors...")
+        try:
+            self.lock.acquire()
             message = {
                 "id": self.my_id,
                 "routing_table": self.routing_table
@@ -282,6 +283,8 @@ class Router:
                 if neighbor:
                     self.send_message(neighbor, message)
             print("Routing updates sent.")
+        finally:
+            self.lock.release()
 
     def disable_link(self, server_id):
         """Disables a link to a neighbor."""
@@ -314,51 +317,52 @@ class Router:
                     continue
 
                 command = command_line[0].lower()
-                with self.lock:  # Ensure thread-safe access
-                    if command == "display":
-                        self.display_routing_table()
-                    elif command == "step":
-                        print("Manually triggering a routing update.")
-                        threading.Thread(target=self.step, daemon=True).start()
-                    elif command == "crash":
-                        print("Simulating server crash.")
-                        self.crash()
-                        break
-                    elif command == "packets":
-                        self.display_packets()
-                    elif command == "update" and len(command_line) == 4:
-                        server1, server2, cost = map(int, command_line[1:])
-                        threading.Thread(target=self.update, args=(server1, server2, cost), daemon=True).start()
-                    elif command == "disable" and len(command_line) == 2:
-                        server_id = int(command_line[1])
-                        threading.Thread(target=self.disable_link, args=(server_id,), daemon=True).start()
-                    else:
-                        print("Invalid command.")
+                if command == "display":
+                    self.display_routing_table()
+                elif command == "step":
+                    print("Manually triggering a routing update.")
+                    self.step()
+                elif command == "crash":
+                    print("Simulating server crash.")
+                    self.crash()
+                    break
+                elif command == "packets":
+                    self.display_packets()
+                elif command == "update" and len(command_line) == 4:
+                    server1, server2, cost = map(int, command_line[1:])
+                    self.update(server1, server2, cost)
+                elif command == "disable" and len(command_line) == 2:
+                    server_id = int(command_line[1])
+                    self.disable_link(server_id)
+                else:
+                    print("Invalid command.")
             except Exception as e:
                 print(f"Error processing command: {e}")
 
     def update(self, server1_id, server2_id, new_cost):
         """Update the cost of a link between two servers."""
         try:
-            with self.lock:
-                if server1_id == self.my_id or server2_id == self.my_id:
-                    target_id = server2_id if server1_id == self.my_id else server1_id
-                    if target_id in self.neighbors:
-                        print(f"Updating direct link to {target_id}: cost -> {new_cost}")
-                        self.routing_table[target_id] = new_cost
-                        self.next_hop[target_id] = target_id
-                        # Trigger full re-evaluation
-                        self.recalculate_routes()
-                        print("Routing table after update:")
-                        self.display_routing_table()
-                        # Propagate updates
-                        threading.Thread(target=self.step, daemon=True).start()
-                    else:
-                        print(f"Server {target_id} is not a direct neighbor. Cannot update.")
-                else:
-                    print("This server is not involved in the specified link.")
+            self.lock.acquire()
+            if server1_id == self.my_id or server2_id == self.my_id:
+                target_id = server2_id if server1_id == self.my_id else server1_id
+                if target_id in self.neighbors:
+                    print(f"Updating direct link to {target_id}: cost -> {new_cost}")
+                    self.routing_table[target_id] = new_cost
+                    self.next_hop[target_id] = target_id
+
+                    # Trigger full re-evaluation
+                    self.recalculate_routes()
+                    print("Routing table after update:")
+                    self.display_routing_table()
+            else:
+                print("This server is not involved in the specified link.")
         except Exception as e:
             print(f"Error during update: {e}")
+        finally:
+            self.lock.release()
+
+        # Propagate updates AFTER releasing the lock
+        self.step()
 
     def recalculate_routes(self):
         """Recalculate routing table using Bellman-Ford logic."""
