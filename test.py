@@ -179,20 +179,29 @@ class Router:
 
         updated = False
         with self.lock:
-            for dest_id, received_cost in received_table.items():
+            # Recalculate the cost to all destinations
+            for dest_id in self.routing_table.keys():
+                # Skip self
                 if dest_id == self.my_id:
                     continue
 
-                # Calculate new cost via sender
-                cost_to_sender = self.routing_table.get(sender_id, float('inf'))
-                new_cost = cost_to_sender + received_cost
+                # Direct cost to the destination
+                direct_cost = self.routing_table.get(dest_id, float('inf'))
 
-                # Update only if new cost is better
-                if new_cost < self.routing_table.get(dest_id, float('inf')):
-                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
-                    self.routing_table[dest_id] = new_cost
-                    self.next_hop[dest_id] = sender_id
-                    updated = True
+                # New cost via the sender
+                cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+                received_cost = received_table.get(dest_id, float('inf'))
+                new_cost_via_sender = cost_to_sender + received_cost
+
+                # Choose the best path: direct or via sender
+                best_cost = min(direct_cost, new_cost_via_sender)
+
+                # Update routing table and next hop if necessary
+            if best_cost != self.routing_table[dest_id]:
+                self.routing_table[dest_id] = best_cost
+                self.next_hop[dest_id] = sender_id if best_cost == new_cost_via_sender else dest_id
+                print(f"Updated route to {dest_id}: cost {direct_cost} -> {best_cost}, next hop: {self.next_hop[dest_id]}")
+                updated = True
 
         if updated:
             print("Routing table updated based on received message.")
