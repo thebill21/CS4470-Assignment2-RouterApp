@@ -182,7 +182,12 @@ class Router:
             for dest_id, received_cost in received_table.items():
                 if dest_id == self.my_id:
                     continue
-                new_cost = self.routing_table.get(sender_id, float('inf')) + received_cost
+
+                # Calculate new cost via sender
+                cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+                new_cost = cost_to_sender + received_cost
+
+                # Update only if new cost is better
                 if new_cost < self.routing_table.get(dest_id, float('inf')):
                     print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
                     self.routing_table[dest_id] = new_cost
