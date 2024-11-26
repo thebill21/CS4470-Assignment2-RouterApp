@@ -40,7 +40,120 @@ class Router:
         self.start_listening()
         self.start_periodic_updates()
         self.connect_neighbors()
+        self.start_health_monitor()
         print("Initialization complete.\n")
+
+    def start_health_monitor(self):
+        """Starts a thread to monitor the health of neighbors."""
+        def health_check():
+            while self.running:
+                for neighbor_id in list(self.routing_table.keys()):  # Iterate over all nodes
+                    neighbor = self.get_node_by_id(neighbor_id)
+                    if neighbor:
+                        try:
+                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                                s.settimeout(2)  # Set a small timeout for health checks
+                                s.connect((neighbor.ip, neighbor.port))
+                                s.sendall(b"PING")
+                                if neighbor_id in self.next_hop and self.routing_table[neighbor_id] == float('inf'):
+                                    print(f"Neighbor {neighbor_id} is back online. Marking as active.")
+                                    self.mark_as_reactivated(neighbor_id)
+                                else:
+                                    print(f"Neighbor {neighbor_id} is alive.")
+                        except Exception as e:
+                            if neighbor_id in self.neighbors:  # Only mark as crashed if it was previously active
+                                print(f"Neighbor {neighbor_id} is not responding. Marking as crashed.")
+                                self.mark_as_crashed(neighbor_id)
+                time.sleep(5)  # Run health checks every 5 seconds
+
+        threading.Thread(target=health_check, daemon=True).start()
+
+    def mark_as_crashed(self, neighbor_id):
+        """Mark a neighbor as crashed and update routing table."""
+        with self.lock:
+            if neighbor_id in self.neighbors:
+                print(f"Marking neighbor {neighbor_id} as crashed.")
+                self.routing_table[neighbor_id] = float('inf')  # Mark the edge as infinity
+                self.next_hop[neighbor_id] = None
+                self.neighbors.remove(neighbor_id)  # Remove the crashed neighbor from active neighbors
+
+            # Recalculate all routes to exclude the crashed node
+            for dest_id, next_hop in list(self.next_hop.items()):
+                if next_hop == neighbor_id:  # If the next hop for a destination was the crashed node
+                    self.routing_table[dest_id] = float('inf')  # Set cost to infinity
+                    self.next_hop[dest_id] = None  # Remove the next hop
+            self.recalculate_routes()  # Recalculate routes to find alternative paths
+            self.step()  # Inform other neighbors about the crash
+
+    def mark_as_reactivated(self, neighbor_id):
+        """Mark a previously crashed neighbor as reactivated and update routing table."""
+        with self.lock:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor:
+                print(f"Reactivating neighbor {neighbor_id}.")
+                self.routing_table[neighbor_id] = self.get_initial_cost_to_neighbor(neighbor_id)
+                self.next_hop[neighbor_id] = neighbor_id
+                self.neighbors.add(neighbor_id)  # Add back to active neighbors
+                self.recalculate_routes()  # Recalculate routes based on updated topology
+                self.step()  # Inform other neighbors about the reactivation
+
+    def get_initial_cost_to_neighbor(self, neighbor_id):
+        """Retrieve the initial cost to a neighbor from the topology."""
+        for neighbor in self.nodes:
+            if neighbor.id == neighbor_id:
+                return self.routing_table.get(neighbor_id, float('inf'))
+        return float('inf')
+
+    def recalculate_routes(self):
+        """Recalculate routing table using Bellman-Ford logic."""
+        updated = False
+        with self.lock:
+            print("Recalculating routes using Bellman-Ford logic...")
+
+            for dest_id in self.routing_table.keys():
+                if dest_id == self.my_id:
+                    continue  # Skip self
+
+                best_cost = float('inf')
+                best_next_hop = None
+
+                # Evaluate routes through all active neighbors
+                for neighbor_id in self.neighbors:
+                    cost_to_neighbor = self.routing_table.get(neighbor_id, float('inf'))
+                    neighbor_cost_to_dest = self.get_neighbor_cost_to_dest(neighbor_id, dest_id)
+
+                    # Skip if neighbor is unreachable or the destination is not reachable through it
+                    if cost_to_neighbor == float('inf') or neighbor_cost_to_dest == float('inf'):
+                        continue
+
+                    total_cost = cost_to_neighbor + neighbor_cost_to_dest
+
+                    # Update if this route is better
+                    if total_cost < best_cost:
+                        best_cost = total_cost
+                        best_next_hop = neighbor_id
+
+                # Apply updates to the routing table if necessary
+                if best_cost != self.routing_table[dest_id] or best_next_hop != self.next_hop.get(dest_id):
+                    print(f"Updated route to {dest_id}: cost {self.routing_table[dest_id]} -> {best_cost}, next hop: {best_next_hop}")
+                    self.routing_table[dest_id] = best_cost
+                    self.next_hop[dest_id] = best_next_hop
+                    updated = True
+
+            if updated:
+                print("Routing table updated after recalculation.")
+                self.display_routing_table()
+            else:
+                print("No changes in routing table after recalculation.")
+
+    def get_neighbor_cost_to_dest(self, neighbor_id, dest_id):
+        """Retrieve the cost from a neighbor to a destination."""
+        if neighbor_id not in self.neighbors:
+            return float('inf')  # If the neighbor is not active, return infinity
+
+        # Simulate getting the cost from the neighbor's routing table
+        # In a real implementation, you would access the neighbor's last received routing table
+        return self.routing_table.get(dest_id, float('inf'))
 
     def get_my_ip(self):
         """Get the machine's local IP address."""
@@ -212,24 +325,34 @@ class Router:
         except Exception as e:
             print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
 
+    # def display_routing_table(self):
+    #     """Display the routing table."""
+    #     print("\nRouting Table:")
+    #     print("Destination\tNext Hop\tCost")
+    #     print("--------------------------------")
+    #     seen = set()
+    #     for dest_id in sorted(self.routing_table.keys(), key=int):  # Ensure sorted by integer
+    #         if dest_id in seen:
+    #             continue  # Skip duplicate entries
+    #         seen.add(dest_id)
+
+    #         next_hop = self.next_hop.get(dest_id, None)
+    #         cost = self.routing_table[dest_id]
+    #         next_hop_str = next_hop if next_hop is not None else "None"
+    #         cost_str = "infinity" if cost == float('inf') else cost
+    #         print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
+    #     print()
+
     def display_routing_table(self):
         """Display the routing table."""
         print("\nRouting Table:")
-        print("Destination\tNext Hop\tCost")
-        print("--------------------------------")
-        seen = set()
-        for dest_id in sorted(self.routing_table.keys(), key=int):  # Ensure sorted by integer
-            if dest_id in seen:
-                continue  # Skip duplicate entries
-            seen.add(dest_id)
-
-            next_hop = self.next_hop.get(dest_id, None)
+        print("Destination\tNext Hop\tCost\tStatus")
+        for dest_id in sorted(self.routing_table.keys()):
             cost = self.routing_table[dest_id]
-            next_hop_str = next_hop if next_hop is not None else "None"
-            cost_str = "infinity" if cost == float('inf') else cost
-            print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
-        print()
-
+            next_hop = self.next_hop.get(dest_id, "None")
+            status = "OFFLINE" if cost == float('inf') else "ONLINE"
+            cost_str = cost if cost != float('inf') else "Inf"
+            print(f"{dest_id}\t\t{next_hop}\t\t{cost_str}\t{status}")
 
     def step(self):
         """Send routing updates to neighbors."""
