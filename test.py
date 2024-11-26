@@ -219,15 +219,16 @@ class Router:
         while retries > 0:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(5)
                     s.connect((neighbor.ip, neighbor.port))
                     s.sendall(json.dumps(message).encode())
                     print(f"Message sent successfully to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
                     return  # Exit on success
-            except Exception as e:
+            except socket.error as e:
                 print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
                 retries -= 1
                 time.sleep(1)
-        print(f"Failed to send message to neighbor {neighbor.id} after 3 retries.")
+        print(f"Failed to send message to neighbor {neighbor.id} after retries.")
 
     # def display_routing_table(self):
     #     """Display the routing table."""
@@ -326,19 +327,25 @@ class Router:
 
     def update(self, server1_id, server2_id, new_cost):
         """Update the cost of a link between two servers."""
-        with self.lock:
-            if server1_id == self.my_id or server2_id == self.my_id:
-                target_id = server2_id if server1_id == self.my_id else server1_id
-                # Update the cost of the direct link
-                self.routing_table[target_id] = new_cost
-                self.next_hop[target_id] = target_id
-                print(f"Updated cost to server {target_id} to {new_cost}")
+        try:
+            with self.lock:
+                if server1_id == self.my_id or server2_id == self.my_id:
+                    target_id = server2_id if server1_id == self.my_id else server1_id
+                    # Update the cost of the direct link
+                    if target_id in self.neighbors:
+                        print(f"Updating direct link to {target_id}: cost -> {new_cost}")
+                        self.routing_table[target_id] = new_cost
+                        self.next_hop[target_id] = target_id
 
-                # Trigger full re-evaluation
-                self.recalculate_routes()
-                self.step()  # Send updates to neighbors
-            else:
-                print("This server is not involved in the specified link.")
+                        # Trigger full re-evaluation and propagate changes
+                        self.recalculate_routes()
+                        self.step()
+                    else:
+                        print(f"Server {target_id} is not a direct neighbor. Cannot update.")
+                else:
+                    print("This server is not involved in the specified link.")
+        except Exception as e:
+            print(f"Error during update: {e}")
 
     def recalculate_routes(self):
         """Recalculate routing table using Bellman-Ford logic."""
