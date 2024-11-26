@@ -154,7 +154,46 @@ class Router:
         print(f"Processing message: {message}")
         # Add message processing logic here
 
-    # Other methods remain unchanged...
+    def run(self):
+        """Run the router to process commands."""
+        print("Router is running. Enter commands:")
+        while self.running:
+            command_line = input("Enter command: ").strip().split()
+            if not command_line:
+                continue
+
+            command = command_line[0].lower()
+            try:
+                if command == "display":
+                    self.display_routing_table()
+                elif command == "step":
+                    print("Manually triggering a routing update.")
+                    self.step()
+                elif command == "crash":
+                    print("Simulating server crash.")
+                    self.crash()
+                    break
+                else:
+                    print("Invalid command.")
+            except Exception as e:
+                print(f"Error processing command: {e}")
+
+    def display_routing_table(self):
+        """Display the routing table."""
+        print("Routing Table:")
+        print("Destination\tNext Hop\tCost")
+        for dest_id, cost in self.routing_table.items():
+            next_hop = self.next_hop.get(dest_id, None)
+            print(f"{dest_id}\t\t{next_hop}\t\t{cost}")
+
+    def step(self):
+        """Manually send routing updates."""
+        print("Sending updates to neighbors.")
+
+    def crash(self):
+        """Simulate a crash."""
+        print("Disabling all connections.")
+        self.running = False
 
 
 if __name__ == "__main__":
