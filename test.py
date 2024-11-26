@@ -212,7 +212,12 @@ class Router:
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
+        seen = set()
         for dest_id in sorted(self.routing_table.keys()):
+            if dest_id in seen:
+                continue  # Skip duplicate entries
+            seen.add(dest_id)
+
             next_hop = self.next_hop.get(dest_id, None)
             cost = self.routing_table[dest_id]
             next_hop_str = next_hop if next_hop is not None else "None"
