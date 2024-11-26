@@ -200,35 +200,48 @@ class Router:
             self.step()  # Send updates to neighbors after a change
 
     def send_message(self, neighbor, message):
-        """Sends a message to a neighbor."""
-        print(f"Sending message to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((neighbor.ip, neighbor.port))
-                formatted_message = json.dumps(message)
-                print(f"Sending formatted JSON message: {formatted_message}")
-                s.sendall(formatted_message.encode())
-                print(f"Message sent successfully to {neighbor.id}.")
-        except Exception as e:
-            print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
+        """Sends a message to a neighbor with retries."""
+        retries = 3
+        while retries > 0:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect((neighbor.ip, neighbor.port))
+                    s.sendall(json.dumps(message).encode())
+                    print(f"Message sent successfully to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
+                    return  # Exit on success
+            except Exception as e:
+                print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
+                retries -= 1
+                time.sleep(1)
+        print(f"Failed to send message to neighbor {neighbor.id} after 3 retries.")
+
+    # def display_routing_table(self):
+    #     """Display the routing table."""
+    #     print("\nRouting Table:")
+    #     print("Destination\tNext Hop\tCost")
+    #     print("--------------------------------")
+    #     seen = set()
+    #     for dest_id in sorted(self.routing_table.keys(), key=int):  # Ensure sorted by integer
+    #         if dest_id in seen:
+    #             continue  # Skip duplicate entries
+    #         seen.add(dest_id)
+
+    #         next_hop = self.next_hop.get(dest_id, None)
+    #         cost = self.routing_table[dest_id]
+    #         next_hop_str = next_hop if next_hop is not None else "None"
+    #         cost_str = "infinity" if cost == float('inf') else cost
+    #         print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
+        print()
 
     def display_routing_table(self):
         """Display the routing table."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
-        print("--------------------------------")
-        seen = set()
-        for dest_id in sorted(self.routing_table.keys(), key=int):  # Ensure sorted by integer
-            if dest_id in seen:
-                continue  # Skip duplicate entries
-            seen.add(dest_id)
-
-            next_hop = self.next_hop.get(dest_id, None)
+        for dest_id in sorted(self.routing_table.keys()):
             cost = self.routing_table[dest_id]
-            next_hop_str = next_hop if next_hop is not None else "None"
-            cost_str = "infinity" if cost == float('inf') else cost
-            print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
-        print()
+            next_hop = self.next_hop.get(dest_id, "None")
+            cost_str = cost if cost != float('inf') else "Infinity"
+            print(f"{dest_id}\t\t{next_hop}\t\t{cost_str}")
 
 
     def step(self):
@@ -244,14 +257,27 @@ class Router:
                 self.send_message(neighbor, message)
         print("Routing updates sent.")
 
+    def disable_link(self, server_id):
+        """Disables a link to a neighbor."""
+        with self.lock:
+            if server_id in self.neighbors:
+                # Set cost to infinity and update routing table
+                self.routing_table[server_id] = float('inf')
+                self.next_hop[server_id] = None
+                print(f"Disabled link to neighbor {server_id}.")
+                self.step()  # Propagate the update
+            else:
+                print(f"Cannot disable: Server {server_id} is not a direct neighbor.")
+
     def crash(self):
-        """Simulate a crash."""
-        print("Disabling all connections.")
+        """Simulate a crash and clean shutdown."""
+        print("Simulating crash. Stopping all operations.")
         self.running = False
+        time.sleep(1)  # Allow threads to finish gracefully
+        print("Router has stopped.")
 
     def run(self):
         """Run the router to process commands and manage periodic updates."""
-        # Start periodic updates in a separate thread
         threading.Thread(target=self.start_periodic_updates, daemon=True).start()
         print("Router is running. Enter commands:")
         
@@ -274,13 +300,11 @@ class Router:
                 elif command == "packets":
                     self.display_packets()
                 elif command == "update" and len(command_line) == 4:
-                    try:
-                        server1 = int(command_line[1])
-                        server2 = int(command_line[2])
-                        new_cost = int(command_line[3])
-                        self.update(server1, server2, new_cost)
-                    except ValueError:
-                        print("Invalid input. Use: update <server1_id> <server2_id> <new_cost>")
+                    server1, server2, cost = map(int, command_line[1:])
+                    self.update(server1, server2, cost)
+                elif command == "disable" and len(command_line) == 2:
+                    server_id = int(command_line[1])
+                    self.disable_link(server_id)
                 else:
                     print("Invalid command.")
             except Exception as e:
