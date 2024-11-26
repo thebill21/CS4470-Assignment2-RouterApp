@@ -364,31 +364,58 @@ class Router:
         """Recalculate routing table using Bellman-Ford logic."""
         updated = False
         with self.lock:
+            print("Recalculating routes using Bellman-Ford logic...")
+
+            # Iterate over all possible destinations
             for dest_id in self.routing_table.keys():
                 if dest_id == self.my_id:
-                    continue
+                    continue  # Skip self
 
-                # Re-evaluate the shortest path for each destination
-                best_cost = float('inf')
-                best_next_hop = None
+                # Initialize to the current best cost and next hop
+                best_cost = self.routing_table[dest_id]
+                best_next_hop = self.next_hop.get(dest_id)
 
+                # Evaluate routes through all neighbors
                 for neighbor_id in self.neighbors:
-                    cost_to_neighbor = self.routing_table[neighbor_id]
-                    neighbor_cost_to_dest = self.routing_table.get(dest_id, float('inf'))
+                    cost_to_neighbor = self.routing_table.get(neighbor_id, float('inf'))
+                    neighbor_cost_to_dest = self.get_neighbor_cost_to_dest(neighbor_id, dest_id)
+
+                    # Skip if neighbor is unreachable
+                    if cost_to_neighbor == float('inf') or neighbor_cost_to_dest == float('inf'):
+                        continue
+
+                    # Compute total cost via this neighbor
                     total_cost = cost_to_neighbor + neighbor_cost_to_dest
 
+                    # Update if this route is better
                     if total_cost < best_cost:
                         best_cost = total_cost
                         best_next_hop = neighbor_id
 
-                if best_cost != self.routing_table[dest_id]:
+                # Apply updates to the routing table if necessary
+                if best_cost != self.routing_table[dest_id] or best_next_hop != self.next_hop.get(dest_id):
+                    print(f"Updated route to {dest_id}: cost {self.routing_table[dest_id]} -> {best_cost}, next hop: {best_next_hop}")
                     self.routing_table[dest_id] = best_cost
                     self.next_hop[dest_id] = best_next_hop
                     updated = True
-                    print(f"Recalculated route to {dest_id}: cost -> {best_cost}, next hop: {best_next_hop}")
 
-        if updated:
-            print("Routing table recalculated and updated.")
+            if updated:
+                print("Routing table updated after recalculation.")
+                self.display_routing_table()
+            else:
+                print("No changes in routing table after recalculation.")
+
+    def get_neighbor_cost_to_dest(self, neighbor_id, dest_id):
+        """Retrieve the cost from a neighbor to a destination."""
+        # Simulate retrieving a neighbor's cost to a destination
+        # This should be based on the most recent routing table received from the neighbor
+        neighbor_node = self.get_node_by_id(neighbor_id)
+        if not neighbor_node:
+            return float('inf')  # If the neighbor is not found, return infinity
+
+        # Placeholder for getting the actual routing table of the neighbor
+        # In real implementation, you'd store the last received routing table from the neighbor
+        return self.routing_table.get(dest_id, float('inf'))
 
 
     def display_packets(self):
