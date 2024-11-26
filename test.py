@@ -136,18 +136,28 @@ class Router:
     def connect_neighbors(self):
         """Attempts to connect to all neighbors."""
         print("Attempting to connect to neighbors...")
+        threads = []
         for neighbor_id in self.neighbors:
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
-                try:
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.settimeout(5)
-                        s.connect((neighbor.ip, neighbor.port))
-                        print(f"Successfully connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
-                except Exception as e:
-                    print(f"Failed to connect to neighbor {neighbor_id} at {neighbor.ip}:{neighbor.port}: {e}")
-            else:
-                print(f"Neighbor {neighbor_id} not found in topology.")
+                thread = threading.Thread(target=self._connect_to_neighbor, args=(neighbor,))
+                thread.daemon = True
+                threads.append(thread)
+                thread.start()
+
+        # Ensure all threads complete or timeout
+        for thread in threads:
+            thread.join(timeout=5)
+
+    def _connect_to_neighbor(self, neighbor):
+        """Helper function to connect to a single neighbor."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5)
+                s.connect((neighbor.ip, neighbor.port))
+                print(f"Successfully connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
+        except Exception as e:
+            print(f"Failed to connect to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}: {e}")
 
     def start_periodic_updates(self):
         """Starts a thread to periodically send updates to neighbors."""
@@ -261,16 +271,17 @@ class Router:
 
     def step(self):
         """Send routing updates to neighbors."""
-        print("Sending updates to neighbors...")
-        message = {
-            "id": self.my_id,
-            "routing_table": self.routing_table
-        }
-        for neighbor_id in self.neighbors:
-            neighbor = self.get_node_by_id(neighbor_id)
-            if neighbor:
-                self.send_message(neighbor, message)
-        print("Routing updates sent.")
+        with self.lock:
+            print("Sending updates to neighbors...")
+            message = {
+                "id": self.my_id,
+                "routing_table": self.routing_table
+            }
+            for neighbor_id in self.neighbors:
+                neighbor = self.get_node_by_id(neighbor_id)
+                if neighbor:
+                    self.send_message(neighbor, message)
+            print("Routing updates sent.")
 
     def disable_link(self, server_id):
         """Disables a link to a neighbor."""
@@ -295,33 +306,34 @@ class Router:
         """Run the router to process commands and manage periodic updates."""
         threading.Thread(target=self.start_periodic_updates, daemon=True).start()
         print("Router is running. Enter commands:")
-        
-        while self.running:
-            command_line = input("Enter command: ").strip().split()
-            if not command_line:
-                continue
 
-            command = command_line[0].lower()
+        while self.running:
             try:
-                if command == "display":
-                    self.display_routing_table()
-                elif command == "step":
-                    print("Manually triggering a routing update.")
-                    self.step()
-                elif command == "crash":
-                    print("Simulating server crash.")
-                    self.crash()
-                    break
-                elif command == "packets":
-                    self.display_packets()
-                elif command == "update" and len(command_line) == 4:
-                    server1, server2, cost = map(int, command_line[1:])
-                    self.update(server1, server2, cost)
-                elif command == "disable" and len(command_line) == 2:
-                    server_id = int(command_line[1])
-                    self.disable_link(server_id)
-                else:
-                    print("Invalid command.")
+                command_line = input("Enter command: ").strip().split()
+                if not command_line:
+                    continue
+
+                command = command_line[0].lower()
+                with self.lock:  # Ensure thread-safe access
+                    if command == "display":
+                        self.display_routing_table()
+                    elif command == "step":
+                        print("Manually triggering a routing update.")
+                        threading.Thread(target=self.step, daemon=True).start()
+                    elif command == "crash":
+                        print("Simulating server crash.")
+                        self.crash()
+                        break
+                    elif command == "packets":
+                        self.display_packets()
+                    elif command == "update" and len(command_line) == 4:
+                        server1, server2, cost = map(int, command_line[1:])
+                        threading.Thread(target=self.update, args=(server1, server2, cost), daemon=True).start()
+                    elif command == "disable" and len(command_line) == 2:
+                        server_id = int(command_line[1])
+                        threading.Thread(target=self.disable_link, args=(server_id,), daemon=True).start()
+                    else:
+                        print("Invalid command.")
             except Exception as e:
                 print(f"Error processing command: {e}")
 
@@ -331,19 +343,16 @@ class Router:
             with self.lock:
                 if server1_id == self.my_id or server2_id == self.my_id:
                     target_id = server2_id if server1_id == self.my_id else server1_id
-                    # Update the cost of the direct link
                     if target_id in self.neighbors:
                         print(f"Updating direct link to {target_id}: cost -> {new_cost}")
                         self.routing_table[target_id] = new_cost
                         self.next_hop[target_id] = target_id
-
-                        # Reconnect to neighbors after an update
-                        print("Re-establishing connections to neighbors...")
-                        self.connect_neighbors()
-
-                        # Trigger full re-evaluation and propagate changes
+                        # Trigger full re-evaluation
                         self.recalculate_routes()
-                        self.step()
+                        print("Routing table after update:")
+                        self.display_routing_table()
+                        # Propagate updates
+                        threading.Thread(target=self.step, daemon=True).start()
                     else:
                         print(f"Server {target_id} is not a direct neighbor. Cannot update.")
                 else:
