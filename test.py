@@ -105,13 +105,17 @@ class Router:
         def listen():
             try:
                 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Allow socket reuse
                 server_socket.bind((self.my_ip, self.my_node.port))
                 server_socket.listen(5)
                 print(f"Listening on {self.my_ip}:{self.my_node.port}")
                 while self.running:
-                    client_socket, address = server_socket.accept()
-                    print(f"Accepted connection from {address}")
-                    self.handle_client(client_socket)
+                    try:
+                        client_socket, address = server_socket.accept()
+                        print(f"Accepted connection from {address}")
+                        threading.Thread(target=self.handle_client, args=(client_socket,), daemon=True).start()
+                    except Exception as e:
+                        print(f"Error accepting connection: {e}")
             except Exception as e:
                 print(f"Error in listening thread: {e}")
 
@@ -141,13 +145,16 @@ class Router:
         for neighbor_id in self.neighbors:
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
-                try:
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.settimeout(5)
-                        s.connect((neighbor.ip, neighbor.port))
-                        print(f"Successfully connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
-                except Exception as e:
-                    print(f"Failed to connect to neighbor {neighbor_id} at {neighbor.ip}:{neighbor.port}: {e}")
+                for attempt in range(3):  # Retry up to 3 times
+                    try:
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.settimeout(5)  # 5-second timeout
+                            s.connect((neighbor.ip, neighbor.port))
+                            print(f"Successfully connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
+                            break
+                    except Exception as e:
+                        print(f"Attempt {attempt + 1}: Failed to connect to neighbor {neighbor_id} at {neighbor.ip}:{neighbor.port}: {e}")
+                        time.sleep(2)  # Wait 2 seconds before retrying
             else:
                 print(f"Neighbor {neighbor_id} not found in topology.")
 
@@ -190,16 +197,19 @@ class Router:
 
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor."""
-        print(f"Sending message to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((neighbor.ip, neighbor.port))
-                formatted_message = json.dumps(message)
-                print(f"Sending formatted JSON message: {formatted_message}")
-                s.sendall(formatted_message.encode())
-                print(f"Message sent successfully to {neighbor.id}.")
-        except Exception as e:
-            print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
+        for attempt in range(3):  # Retry up to 3 times
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(5)  # 5-second timeout
+                    s.connect((neighbor.ip, neighbor.port))
+                    formatted_message = json.dumps(message)
+                    s.sendall(formatted_message.encode())
+                    print(f"Message sent successfully to {neighbor.id}.")
+                    return  # Exit after a successful send
+            except Exception as e:
+                print(f"Attempt {attempt + 1}: Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
+                time.sleep(2)  # Wait 2 seconds before retrying
+        print(f"Failed to send message to {neighbor.id} after 3 attempts.")
 
     def display_routing_table(self):
         """Display the routing table."""
