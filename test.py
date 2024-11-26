@@ -22,7 +22,21 @@ class Router:
         self.start_listening()
         self.start_periodic_updates()
 
+    def get_local_ip(self):
+        """Get the machine's network-facing IP address."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))  # Use an external IP to determine the interface
+                local_ip = s.getsockname()[0]
+            return local_ip
+        except Exception as e:
+            print(f"Error determining local IP: {e}")
+            return "127.0.0.1"  # Fallback to loopback
+
     def load_topology(self):
+        machine_ip = self.get_local_ip()
+        print(f"Detected machine IP: {machine_ip}")
+
         with open(self.topology_file, 'r') as file:
             lines = file.readlines()
         
@@ -34,9 +48,13 @@ class Router:
             node_info = lines[i].strip().split()
             node_id, ip, port = int(node_info[0]), node_info[1], int(node_info[2])
             self.nodes.append({"id": node_id, "ip": ip, "port": port})
-            if ip == socket.gethostbyname(socket.gethostname()):  # Detect self
+
+            if ip == machine_ip:
                 self.my_id = node_id
                 self.my_node = {"id": node_id, "ip": ip, "port": port}
+        
+        if self.my_node is None:
+            raise ValueError(f"Machine IP {machine_ip} not found in topology file. Ensure it matches an entry.")
 
         # Load neighbors
         for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
@@ -54,6 +72,8 @@ class Router:
             if node_id not in self.routing_table:
                 self.routing_table[node_id] = float('inf')
                 self.next_hop[node_id] = None
+
+        print("Topology loaded successfully.")
 
     def start_listening(self):
         def listen():
@@ -122,33 +142,83 @@ class Router:
             cost = self.routing_table[dest_id]
             print(f"{dest_id}\t\t{next_hop}\t\t{cost}")
 
+    def disable_link(self, server_id):
+        """Disable the link to a given server."""
+        with self.lock:
+            if server_id in self.neighbors:
+                # Set link cost to infinity and remove from neighbors
+                self.routing_table[server_id] = float('inf')
+                self.next_hop[server_id] = None
+                self.neighbors.pop(server_id, None)
+                print(f"Link to server {server_id} disabled.")
+                self.send_updates()
+            else:
+                print(f"Server {server_id} is not a direct neighbor.")
+
+    def monitor_neighbors(self):
+        """Monitor neighbors and detect failures based on update intervals."""
+        missed_updates = {neighbor: 0 for neighbor in self.neighbors}
+
+        while self.running:
+            time.sleep(self.update_interval)
+            with self.lock:
+                for neighbor_id in list(missed_updates.keys()):
+                    missed_updates[neighbor_id] += 1
+                    if missed_updates[neighbor_id] >= 3:
+                        print(f"Neighbor {neighbor_id} considered unreachable. Marking link as failed.")
+                        self.disable_link(neighbor_id)
+                        missed_updates.pop(neighbor_id, None)
+
+    def crash(self):
+        """Simulate a crash and notify neighbors."""
+        print("Simulating crash: disabling all connections.")
+        with self.lock:
+            self.running = False
+            for neighbor_id in list(self.neighbors.keys()):
+                self.disable_link(neighbor_id)
+
     def handle_commands(self):
+        """Handle user input commands."""
         while self.running:
             command = input("Enter command: ").strip().lower()
             if command == "display":
                 self.display_routing_table()
             elif command == "packets":
                 print(f"Packets received: {self.packet_counter}")
-                self.packet_counter = 0
+                self.packet_counter = 0  # Reset counter
             elif command == "crash":
-                self.running = False
+                self.crash()
+            elif command.startswith("disable"):
+                _, server_id = command.split()
+                self.disable_link(int(server_id))
             elif command.startswith("update"):
-                _, server1, server2, new_cost = command.split()
-                self.update_link(int(server1), int(server2), int(new_cost))
+                try:
+                    _, server1, server2, cost = command.split()
+                    self.update_link(int(server1), int(server2), int(cost))
+                except ValueError:
+                    print("Invalid input. Use: update <server1_id> <server2_id> <cost>")
             else:
                 print("Invalid command.")
 
     def update_link(self, server1, server2, cost):
-        if self.my_id in [server1, server2]:
-            neighbor_id = server2 if server1 == self.my_id else server1
-            if neighbor_id in self.neighbors:
-                self.routing_table[neighbor_id] = cost
-                self.next_hop[neighbor_id] = neighbor_id
-                self.send_updates()
+        """Update the cost of a link between two servers."""
+        with self.lock:
+            if self.my_id in [server1, server2]:
+                neighbor_id = server2 if server1 == self.my_id else server1
+                if neighbor_id in self.neighbors:
+                    self.routing_table[neighbor_id] = cost
+                    self.next_hop[neighbor_id] = neighbor_id
+                    print(f"Updated link cost to server {neighbor_id} to {cost}.")
+                    self.send_updates()
+                else:
+                    print("Can only update cost to direct neighbors.")
             else:
-                print("Can only update cost to direct neighbors.")
-        else:
-            print("This server is not involved in the link update.")
+                print("This server is not involved in the specified link.")
+
+    def monitor_and_command(self):
+        """Start monitoring neighbors and accept commands."""
+        threading.Thread(target=self.monitor_neighbors, daemon=True).start()
+        self.handle_commands()
 
 
 if __name__ == "__main__":
