@@ -162,6 +162,57 @@ class Router:
         finally:
             client_socket.close()
 
+    # def process_message(self, message):
+    #     """Process incoming messages, including routing updates and link update commands."""
+    #     self.number_of_packets_received += 1  # Increment packet count for statistics
+
+    #     if "command" in message:
+    #         # Handle specific commands, such as 'update'
+    #         if message["command"] == "update":
+    #             server1_id = int(message["server1_id"])
+    #             server2_id = int(message["server2_id"])
+    #             new_cost = float(message["new_cost"])
+    #             print(f"Received update command: Updating link {server1_id} <-> {server2_id} to cost {new_cost}.")
+                
+    #             if self.my_id in (server1_id, server2_id):
+    #                 # Update local routing table and neighbors
+    #                 neighbor_id = server2_id if server1_id == self.my_id else server1_id
+    #                 with self.lock:
+    #                     self.neighbors[neighbor_id] = new_cost
+    #                     self.routing_table[neighbor_id] = new_cost
+    #                     self.next_hop[neighbor_id] = neighbor_id
+    #                     print(f"Updated cost to neighbor {neighbor_id} to {new_cost}.")
+    #                 self.step()  # Propagate the updated routing table
+    #             return
+
+    #     # Process routing table updates from neighbors
+    #     sender_id = int(message.get("id"))  # Ensure the sender ID is an integer
+    #     received_table = {int(k): float(v) for k, v in message.get("routing_table", {}).items()}  # Convert keys and values
+
+    #     print(f"Processing routing update from Router {sender_id}. Received table: {received_table}")
+
+    #     updated = False  # Track whether the routing table was updated
+    #     with self.lock:
+    #         for dest_id, received_cost in received_table.items():
+    #             if dest_id == self.my_id:
+    #                 continue  # Skip routes to self
+
+    #             # Calculate new cost via the sender
+    #             cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+    #             new_cost = cost_to_sender + received_cost
+
+    #             # Update only if the new cost is better
+    #             if new_cost < self.routing_table.get(dest_id, float('inf')):
+    #                 print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
+    #                 self.routing_table[dest_id] = new_cost
+    #                 self.next_hop[dest_id] = sender_id
+    #                 updated = True
+
+    #     if updated:
+    #         print("Routing table updated based on received message.")
+    #         self.display_routing_table()  # Display the updated routing table
+    #         self.step()  # Trigger routing updates to neighbors
+
     def process_message(self, message):
         """Process incoming messages, including routing updates and link update commands."""
         self.number_of_packets_received += 1  # Increment packet count for statistics
@@ -173,16 +224,18 @@ class Router:
                 server2_id = int(message["server2_id"])
                 new_cost = float(message["new_cost"])
                 print(f"Received update command: Updating link {server1_id} <-> {server2_id} to cost {new_cost}.")
-                
-                if self.my_id in (server1_id, server2_id):
-                    # Update local routing table and neighbors
-                    neighbor_id = server2_id if server1_id == self.my_id else server1_id
-                    with self.lock:
+
+                # Update the local topology
+                with self.lock:
+                    if server1_id == self.my_id or server2_id == self.my_id:
+                        neighbor_id = server2_id if server1_id == self.my_id else server1_id
                         self.neighbors[neighbor_id] = new_cost
                         self.routing_table[neighbor_id] = new_cost
                         self.next_hop[neighbor_id] = neighbor_id
                         print(f"Updated cost to neighbor {neighbor_id} to {new_cost}.")
-                    self.step()  # Propagate the updated routing table
+
+                # Propagate the change to neighbors
+                self.step()
                 return
 
         # Process routing table updates from neighbors
@@ -237,8 +290,38 @@ class Router:
         except Exception as e:
             print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
 
+    # def update(self, server1_id, server2_id, new_cost):
+    #     """Update a link cost bi-directionally."""
+    #     with self.lock:
+    #         # Update local view of the link
+    #         if server1_id == self.my_id or server2_id == self.my_id:
+    #             neighbor_id = server2_id if server1_id == self.my_id else server1_id
+    #             self.neighbors[neighbor_id] = new_cost
+    #             self.routing_table[neighbor_id] = new_cost
+    #             self.next_hop[neighbor_id] = neighbor_id
+    #             print(f"Updated local link cost to {neighbor_id} to {new_cost}.")
+    #         else:
+    #             print(f"This router is not involved in the link between {server1_id} and {server2_id}.")
+
+    #     # Send an update message to the other router involved
+    #     target_router_id = server2_id if server1_id == self.my_id else server1_id
+    #     neighbor = self.get_node_by_id(target_router_id)
+
+    #     if neighbor:
+    #         update_message = {
+    #             "command": "update",
+    #             "server1_id": server1_id,
+    #             "server2_id": server2_id,
+    #             "new_cost": new_cost
+    #         }
+    #         print(f"Notifying neighbor {target_router_id} about the link update.")
+    #         self.send_message(neighbor, update_message)
+
+    #     # Trigger routing table propagation
+    #     self.step()
+
     def update(self, server1_id, server2_id, new_cost):
-        """Update a link cost bi-directionally."""
+        """Update a link cost bi-directionally and synchronize topology."""
         with self.lock:
             # Update local view of the link
             if server1_id == self.my_id or server2_id == self.my_id:
@@ -250,22 +333,21 @@ class Router:
             else:
                 print(f"This router is not involved in the link between {server1_id} and {server2_id}.")
 
-        # Send an update message to the other router involved
-        target_router_id = server2_id if server1_id == self.my_id else server1_id
-        neighbor = self.get_node_by_id(target_router_id)
-
-        if neighbor:
+            # Broadcast topology update to all neighbors
             update_message = {
                 "command": "update",
                 "server1_id": server1_id,
                 "server2_id": server2_id,
                 "new_cost": new_cost
             }
-            print(f"Notifying neighbor {target_router_id} about the link update.")
-            self.send_message(neighbor, update_message)
+            for neighbor_id in self.neighbors:
+                neighbor = self.get_node_by_id(neighbor_id)
+                if neighbor:
+                    print(f"Notifying neighbor {neighbor_id} about the link update.")
+                    self.send_message(neighbor, update_message)
 
-        # Trigger routing table propagation
-        self.step()
+            # Recompute routing table after updating the topology
+            self.step()
 
     def display_routing_table(self):
         """Display the routing table."""
