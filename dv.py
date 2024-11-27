@@ -97,50 +97,67 @@ class Router:
         """Reads the topology file and initializes routing tables."""
         print(f"Loading topology from file: {self.topology_file}")
         try:
+            # Step 1: Read and parse the topology file
             self.topology = defaultdict(dict)  # Store topology in memory
             with open(self.topology_file, 'r') as f:
                 lines = f.read().strip().split('\n')
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
-            # Load nodes
+            # Step 2: Load servers (nodes)
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
                 self.nodes.append(node)
+
+                # Check if this is the current server
                 if parts[1] == self.my_ip:
                     self.my_id = node.id
                     self.my_node = node
                     self.routing_table[node.id] = 0  # Distance to self is 0
                     self.next_hop[node.id] = node.id
+                    print(f"[INFO] Identified self as Server {node.id}")
                 else:
-                    self.routing_table[node.id] = float('inf')
+                    self.routing_table[node.id] = float('inf')  # Initialize distances to infinity
                     self.next_hop[node.id] = None
+
                 print(f"Loaded server {node.id}: IP={node.ip}, Port={node.port}")
 
-            # Load links
+            # Step 3: Load links (connections)
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
+
+                # Update the topology structure with link costs
                 self.topology[from_id][to_id] = cost
                 self.topology[to_id][from_id] = cost
+
+                # If this server is directly connected, update neighbors and routing tables
                 if from_id == self.my_id:
                     self.neighbors[to_id] = cost
                     self.routing_table[to_id] = cost
                     self.next_hop[to_id] = to_id
+                    print(f"[INFO] Added neighbor: Server {to_id} with cost {cost}")
                 elif to_id == self.my_id:
                     self.neighbors[from_id] = cost
                     self.routing_table[from_id] = cost
                     self.next_hop[from_id] = from_id
+                    print(f"[INFO] Added neighbor: Server {from_id} with cost {cost}")
+
                 print(f"Link loaded: {from_id} <-> {to_id} with cost {cost}")
 
-            # Apply Bellman-Ford algorithm after loading topology
+            # Step 4: Ensure the topology is correctly structured
+            print("[DEBUG] Initial topology structure:")
+            for from_id, connections in self.topology.items():
+                print(f"  Server {from_id}: {connections}")
+
+            # Step 5: Apply Bellman-Ford algorithm to compute initial routing table
             print("Applying Bellman-Ford algorithm for initial routing table computation.")
             self.recompute_routing_table()
 
             print("Topology loaded successfully.\n")
         except Exception as e:
-            print(f"Error loading topology: {e}")
+            print(f"[ERROR] Failed to load topology: {e}")
 
     def start_listening(self):
         """Start a server socket to listen for incoming connections."""
@@ -451,41 +468,42 @@ class Router:
         print("[INFO] Recomputing routing table...")
 
         with self.lock:
-            # Reset the routing table for all nodes
+            # Reset the routing table and next hops
             for node in self.nodes:
                 if node.id == self.my_id:
-                    # Distance to self is always 0
+                    # Distance to self is 0, next hop is self
                     self.routing_table[node.id] = 0
                     self.next_hop[node.id] = self.my_id
                 else:
-                    # Initialize all other distances to infinity
+                    # Initialize other distances to infinity and next hops to None
                     self.routing_table[node.id] = float('inf')
                     self.next_hop[node.id] = None
 
-            # Perform the Bellman-Ford iterations
+            # Perform Bellman-Ford iterations
             for _ in range(len(self.nodes) - 1):  # At most (number of nodes - 1) iterations
                 for from_id, neighbors in self.topology.items():
                     for to_id, cost in neighbors.items():
                         if cost == float('inf'):  # Skip disabled links
                             continue
 
-                        # Calculate the new cost to the destination via the neighbor
+                        # Calculate the cost to the destination via this link
                         new_cost = self.routing_table[from_id] + cost
 
-                        # If the new cost is better, update the routing table
+                        # If the new cost is better, update the routing table and next hop
                         if new_cost < self.routing_table[to_id]:
                             self.routing_table[to_id] = new_cost
+                            # Update next hop: use the direct neighbor if it's reachable
                             self.next_hop[to_id] = (
-                                from_id if self.my_id == from_id else self.next_hop[from_id]
+                                to_id if self.my_id == from_id else self.next_hop[from_id]
                             )
 
-            # Ensure that unreachable nodes retain None as next_hop
+            # Handle unreachable nodes by ensuring next hop is None
             for dest_id in self.routing_table:
                 if self.routing_table[dest_id] == float('inf'):
                     self.next_hop[dest_id] = None
 
-            # Display the updated routing table for debugging
-            self.display_routing_table()
+            # Display the updated routing table
+            self.display_routing_table()     
 
     def display_routing_table(self):
         """Display the routing table."""
