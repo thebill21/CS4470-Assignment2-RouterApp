@@ -84,8 +84,7 @@ class Router:
             client_socket, client_address = server_socket.accept()
             threading.Thread(target=self.handle_connection, args=(client_socket, client_address)).start()
 
-    @staticmethod
-    def parse_routing_update(message):
+    def parse_routing_update(self, message):
         """Parse the incoming byte stream into a structured routing table."""
         try:
             # Read the number of update fields (2 bytes)
