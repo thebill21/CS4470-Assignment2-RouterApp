@@ -84,14 +84,107 @@ class Router:
             client_socket, client_address = server_socket.accept()
             threading.Thread(target=self.handle_connection, args=(client_socket, client_address)).start()
 
-    def handle_connection(self, client_socket, client_address):
-        """Handle incoming connections and exchange routing tables in binary format."""
+    @staticmethod
+    def parse_routing_update(message):
+        """Parse the incoming byte stream into a structured routing table."""
         try:
-            # Receive the entire message in binary format
+            # Read the number of update fields (2 bytes)
+            num_fields = struct.unpack('!H', message[:2])[0]
+
+            # Read the server port (2 bytes)
+            server_port = struct.unpack('!H', message[2:4])[0]
+
+            # Read the server IP (4 bytes)
+            server_ip = socket.inet_ntoa(message[4:8])
+
+            # Initialize the routing table
+            routing_table = []
+
+            # Parse each update field
+            offset = 8
+            for _ in range(num_fields):
+                # Read Server IP (4 bytes)
+                dest_ip = socket.inet_ntoa(message[offset:offset + 4])
+                offset += 4
+
+                # Read Server Port (2 bytes)
+                dest_port = struct.unpack('!H', message[offset:offset + 2])[0]
+                offset += 2
+
+                # Read Server ID (2 bytes)
+                dest_id = struct.unpack('!H', message[offset:offset + 2])[0]
+                offset += 2
+
+                # Read Cost (2 bytes)
+                cost = struct.unpack('!H', message[offset:offset + 2])[0]
+                offset += 2
+
+                # Append the parsed information
+                routing_table.append({
+                    "dest_ip": dest_ip,
+                    "dest_port": dest_port,
+                    "dest_id": dest_id,
+                    "cost": cost
+                })
+
+            # Return the parsed data
+            return {
+                "num_fields": num_fields,
+                "server_port": server_port,
+                "server_ip": server_ip,
+                "routing_table": routing_table
+            }
+
+        except Exception as e:
+            print(f"Error parsing routing update: {e}")
+            return None
+        
+    def process_parsed_message(self, parsed_data):
+        """Process the parsed routing table update."""
+        print(f"Processing parsed data: {parsed_data}")
+        sender_ip = parsed_data["server_ip"]
+        sender_port = parsed_data["server_port"]
+        sender_id = None
+
+        # Find the sender ID based on IP and port
+        for node in self.nodes:
+            if node.ip == sender_ip and node.port == sender_port:
+                sender_id = node.id
+                break
+
+        if sender_id is None:
+            print(f"Unknown sender: {sender_ip}:{sender_port}")
+            return
+
+        updated = False
+        with self.lock:
+            for entry in parsed_data["routing_table"]:
+                dest_id = entry["dest_id"]
+                cost = entry["cost"]
+
+                # Cost via the sender
+                cost_to_sender = self.routing_table[self.my_id].get(sender_id, float('inf'))
+                new_cost = cost_to_sender + cost
+
+                # Update if the new cost is better
+                if dest_id not in self.routing_table[self.my_id] or new_cost < self.routing_table[self.my_id][dest_id]:
+                    print(f"[DEBUG] Updating route to {dest_id}: cost {self.routing_table[self.my_id].get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
+                    self.routing_table[self.my_id][dest_id] = new_cost
+                    updated = True
+
+        if updated:
+            print("[DEBUG] Routing table updated based on received message.")
+            self.recalculate_routes()
+
+    def handle_connection(self, client_socket, client_address):
+        """Handle incoming connections and process routing updates."""
+        try:
             message = client_socket.recv(1024)
             if message:
-                # Process the binary message directly without decoding
-                self.process_message(message)
+                print(f"Processing message: {message}")
+                parsed_data = self.parse_routing_update(message)
+                if parsed_data:
+                    self.process_parsed_message(parsed_data)
         except Exception as e:
             print(f"Error handling connection: {e}")
         finally:
