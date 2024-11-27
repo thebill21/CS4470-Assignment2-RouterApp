@@ -275,14 +275,20 @@ class Router:
 
     def step(self):
         """Send routing updates to neighbors."""
+        print("\n[STEP] Triggering routing updates to neighbors.")
         message = {
             "id": self.my_id,
             "routing_table": self.routing_table
         }
+
         for neighbor_id, cost in self.neighbors.items():
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
+                print(f"[STEP] Preparing to send routing table to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}.")
                 self.send_message(neighbor, message)
+            else:
+                print(f"[STEP] Neighbor {neighbor_id} not found in node list. Skipping.")
+        print("[STEP] Routing updates broadcasted.\n")
 
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor."""
