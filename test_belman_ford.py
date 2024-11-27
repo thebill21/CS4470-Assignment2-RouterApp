@@ -328,8 +328,27 @@ class Router:
     #     self.step()
 
     def update(self, server1_id, server2_id, new_cost):
-        """Update a link cost bi-directionally and synchronize topology."""
-        print(f"Updating edge {server1_id} <-> {server2_id} with cost {new_cost}.")
+        """Update a link cost bi-directionally and implement the five-step approach."""
+        print(f"Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
+        
+        # Step 1: Update the local in-memory topology.
+        with self.lock:
+            self.topology[server1_id][server2_id] = new_cost
+            self.topology[server2_id][server1_id] = new_cost
+            print(f"Updated in-memory topology for edge {server1_id} <-> {server2_id} to cost {new_cost}.")
+
+        # Step 2: If this router is directly involved, update its local neighbor view.
+        if server1_id == self.my_id or server2_id == self.my_id:
+            neighbor_id = server2_id if server1_id == self.my_id else server1_id
+            with self.lock:
+                self.neighbors[neighbor_id] = new_cost
+                self.routing_table[neighbor_id] = new_cost
+                self.next_hop[neighbor_id] = neighbor_id
+                print(f"Updated local link cost to neighbor {neighbor_id} to {new_cost}.")
+        else:
+            print(f"This router is not directly connected to edge {server1_id} <-> {server2_id}.")
+
+        # Step 3: Broadcast the edge update to all neighbors.
         update_message = {
             "command": "update_edge",
             "server1_id": server1_id,
@@ -339,10 +358,16 @@ class Router:
         for neighbor_id in self.neighbors:
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
+                print(f"Broadcasting edge update to neighbor {neighbor.id}.")
                 self.send_message(neighbor, update_message)
 
-        # Apply the update locally
-        self.apply_update(server1_id, server2_id, new_cost)
+        # Step 4: Roll back the current routing table to the topology state.
+        print("Rolling back routing table to match updated topology.")
+        self.recompute_routing_table()
+
+        # Step 5: Apply the Bellman-Ford algorithm for route recalculation.
+        print("Applying Bellman-Ford algorithm to recalculate routes.")
+        self.step()  # Re-broadcast routing table updates.
 
     def apply_update(self, server1_id, server2_id, new_cost):
         """Apply the edge update and recompute routing table."""
