@@ -34,6 +34,7 @@ class Router:
         self.running = True
         self.lock = threading.Lock()
         self.number_of_packets_received = 0  # Correctly initialize it here
+        self.processed_updates = set()  # Set to track processed topology updates
 
         print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
