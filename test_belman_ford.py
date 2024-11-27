@@ -233,14 +233,31 @@ class Router:
             crashed_server_id = message.get("crashed_server_id")
             print(f"[INFO] Received crash notification for Server {crashed_server_id}.")
 
-            # Update topology to set link cost to infinity
+            # Debug: Topology and neighbors before handling the crash
+            print(f"[DEBUG] Topology before handling crash: {dict(self.topology)}")
+            print(f"[DEBUG] Neighbors before handling crash: {self.neighbors}")
+
+            # Update topology to reflect the crash
             with self.lock:
-                if crashed_server_id in self.neighbors:
-                    print(f"[INFO] Handling crash: Removing link to Server {crashed_server_id}.")
+                if crashed_server_id in self.topology[self.my_id]:
+                    print(f"[INFO] Updating topology to reflect crash of Server {crashed_server_id}.")
                     self.topology[self.my_id][crashed_server_id] = float('inf')
                     self.topology[crashed_server_id][self.my_id] = float('inf')
+                
+                if crashed_server_id in self.neighbors:
+                    print(f"[INFO] Removing Server {crashed_server_id} from neighbors.")
                     self.neighbors.pop(crashed_server_id, None)
-                    self.recompute_routing_table()
+
+            # Debug: Topology and neighbors after handling the crash
+            print(f"[DEBUG] Topology after handling crash: {dict(self.topology)}")
+            print(f"[DEBUG] Neighbors after handling crash: {self.neighbors}")
+
+            # Recompute routing table
+            print(f"[INFO] Recomputing routing table after Server {crashed_server_id} crash.")
+            self.recompute_routing_table()
+
+            # Debug: Routing table after recomputation
+            print(f"[DEBUG] Routing table after recomputation: {self.routing_table}")
             return
 
 
@@ -492,9 +509,11 @@ class Router:
                 updated = False
                 for from_id, neighbors in self.topology.items():
                     for to_id, cost in neighbors.items():
-                        if (from_id, to_id) in self.disabled_links:
-                            continue  # Skip disabled links
+                        # Skip links that are disabled or involve the crashed server
+                        if cost == float('inf') or (from_id, to_id) in self.disabled_links:
+                            continue
 
+                        # Bellman-Ford update step
                         if self.routing_table[from_id] + cost < self.routing_table[to_id]:
                             self.routing_table[to_id] = self.routing_table[from_id] + cost
                             self.next_hop[to_id] = self.next_hop[from_id]
@@ -560,7 +579,7 @@ class Router:
         """Simulate server crash by closing all connections."""
         print("[COMMAND] Simulating server crash. Closing all connections.")
         
-        # Step 1: Notify all neighbors about the crash
+        # Notify all neighbors about the crash
         for neighbor_id in list(self.neighbors.keys()):
             print(f"[INFO] Notifying neighbor {neighbor_id} of server crash.")
             neighbor = self.get_node_by_id(neighbor_id)
@@ -570,14 +589,14 @@ class Router:
                     "crashed_server_id": self.my_id
                 }
                 self.send_message(neighbor, message)
-        
-        # Step 2: Disable links to all neighbors
+
+        # Disable links to all neighbors
         print("[INFO] Broadcasting crash event to neighbors.")
         for neighbor_id in list(self.neighbors.keys()):
             self.disable(neighbor_id)  # Call disable for each neighbor
-        
-        # Step 3: Clear local data structures and terminate
-        self.running = False  # Stop all threads
+
+        # Clear local data structures
+        self.running = False
         self.neighbors.clear()
         self.routing_table.clear()
         self.next_hop.clear()
