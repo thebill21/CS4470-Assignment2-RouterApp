@@ -4,7 +4,6 @@ import time
 import json
 from collections import defaultdict
 
-
 class Node:
     """Represents a node in the network."""
     def __init__(self, node_id, ip, port):
@@ -17,7 +16,6 @@ class Node:
 
     def __eq__(self, other):
         return (self.id, self.ip, self.port) == (other.id, other.ip)
-
 
 class Router:
     """Distance Vector Routing Protocol Router."""
@@ -138,45 +136,25 @@ class Router:
     def recalculate_routes(self):
         """Recalculate the best routes using Bellman-Ford."""
         print("[DEBUG] Recalculating routes...")
-        distances, predecessors = self.bellman_ford(self.global_graph, self.my_id)
+        distances, next_hops = self.bellman_ford(self.global_graph, self.my_id)
         with self.lock:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
-                if dest_id == self.my_id:
-                    # Next hop to self is always itself
-                    self.next_hop[dest_id] = self.my_id
-                elif cost < float('inf'):
-                    # Trace back from destination to find the immediate next hop
-                    next_hop = dest_id
-                    while predecessors[next_hop] != self.my_id:
-                        next_hop = predecessors[next_hop]
-                    self.next_hop[dest_id] = next_hop
-                else:
-                    # No route to destination
-                    self.next_hop[dest_id] = None
+                self.next_hop[dest_id] = next_hops.get(dest_id)
         self.display_routing_table()
 
     def bellman_ford(self, graph, source):
         """Bellman-Ford algorithm to compute shortest paths."""
         distances = {node: float('inf') for node in graph}
-        predecessors = {node: None for node in graph}  # Track predecessors for each node
+        next_hops = {}
         distances[source] = 0
-
-        # Relax edges repeatedly
         for _ in range(len(graph) - 1):
             for u in graph:
                 for v in graph[u]:
                     if distances[u] + graph[u][v] < distances[v]:
                         distances[v] = distances[u] + graph[u][v]
-                        predecessors[v] = u
-
-        # Detect negative weight cycles (not expected in this scenario)
-        for u in graph:
-            for v in graph[u]:
-                if distances[u] + graph[u][v] < distances[v]:
-                    print(f"Warning: Negative weight cycle detected involving edge {u}-{v}")
-
-        return distances, predecessors
+                        next_hops[v] = u
+        return distances, next_hops
 
     def step(self):
         """Send routing updates to neighbors."""
@@ -202,7 +180,6 @@ class Router:
                 self.global_graph[server1_id][server2_id] = new_cost
                 self.global_graph[server2_id][server1_id] = new_cost
                 print(f"Updated link cost between {server1_id} and {server2_id} to {new_cost}.")
-                self.recalculate_routes()  # Update local routing table
                 self.step()  # Notify neighbors of the update
             else:
                 print(f"Error: Link between {server1_id} and {server2_id} does not exist.")
