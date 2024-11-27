@@ -49,11 +49,13 @@ class Router(object):
     """
 
     def __init__(self,
-                 routerName,
-                 routerIP="127.0.0.1",
-                 routerPort=8080,
-                 timeout=15,
-                 www=os.path.join(os.getcwd(), "data", "scenario-1")):
+                routerName,  # Now expects numeric ID
+                routerIP="127.0.0.1",
+                routerPort=8080,
+                timeout=15,
+                www=os.path.join(os.getcwd(), "data", "scenario-1")):
+        if not isinstance(routerName, int):
+            raise ValueError("Router name must be a numeric ID as per the topology file.")
         self.routerName = routerName
         self.routerIP = routerIP
         self.routerPort = routerPort
@@ -182,22 +184,58 @@ class RoutingTable(object):
 
     def load_router_information(self):
         """
-        Load router information.
+        Load router information from a file in the new format.
         """
-        with open(self.routerInformation, "r") as f:
-            for info in f.readlines():
-                info = filter(None, info.split())
+        try:
+            with open(self.routerInformation, "r") as f:
+                lines = f.read().strip().split("\n")
 
-                if len(info) == 1:
-                    self.totalNeighbours = int(info[0])
-                elif len(info) == 4:
-                    if info[0] not in self.neighbours:
-                        self.neighbours[info[0]] = {}
+            num_servers = int(lines[0])
+            num_neighbors = int(lines[1])
 
-                    self.neighbours[info[0]]['ipv4'] = info[2]
-                    self.neighbours[info[0]]['port'] = int(info[3])
-                    self.neighbours[info[0]]['link_cost'] = float(info[1])
+            server_details = {}
+            neighbor_links = []
 
+            # Parse server details
+            for i in range(2, 2 + num_servers):
+                parts = lines[i].split()
+                server_id, ip, port = int(parts[0]), parts[1], int(parts[2])
+                server_details[server_id] = {'ip': ip, 'port': port}
+
+            # Parse neighbor links
+            for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
+                parts = lines[i].split()
+                server1, server2, cost = int(parts[0]), int(parts[1]), float(parts[2])
+                neighbor_links.append((server1, server2, cost))
+
+            # Initialize neighbors and routing table
+            self.totalNeighbours = 0
+            for link in neighbor_links:
+                server1, server2, cost = link
+                if server1 not in self.routingTable:
+                    self.routingTable[server1] = {}
+                if server2 not in self.routingTable:
+                    self.routingTable[server2] = {}
+
+                if server1 == self.sourceRouter or server2 == self.sourceRouter:
+                    self.totalNeighbours += 1
+                    neighbor_id = server2 if server1 == self.sourceRouter else server1
+                    self.neighbours[neighbor_id] = {
+                        'ipv4': server_details[neighbor_id]['ip'],
+                        'port': server_details[neighbor_id]['port'],
+                        'link_cost': cost
+                    }
+
+                self.routingTable[server1][server2] = {'distance': cost, 'nextHopRouter': server2}
+                self.routingTable[server2][server1] = {'distance': cost, 'nextHopRouter': server1}
+
+            self._init_distance_vector()
+            log.info("Loaded router information successfully.")
+
+        except Exception as e:
+            log.error(f"Error loading router information: {e}")
+            raise FileNotExistError(f"File does not exist or is improperly formatted: {self.routerInformation}")
+    
     def _init_distance_vector(self):
         """
         Initialise the distance vector.
@@ -416,9 +454,10 @@ class DistanceVectorRouting(Thread):
 
         # Display the distance vector to be sent
         for destinationRouter, info in distanceVector.items():
-            log.debug("[%s] Shortest Path %s-%s: Cost [%f], Next Hop Router [%s]",
-                      self.threadName, self.routerName, destinationRouter,
-                      info['distance'], info['nextHopRouter'])
+            nextHopRouter = info.get('nextHopRouter')  # Safely retrieve the next hop router
+            log.debug("[%s] Shortest Path %d-%d: Cost [%f], Next Hop Router [%d]",
+                    self.threadName, int(self.routerName), int(destinationRouter),
+                    info['distance'], int(nextHopRouter) if nextHopRouter else -1)
 
         # Send the distance vector to neighbour routers
         for neighbourRouter, routerAddress in neighbourRouters.items():
@@ -459,17 +498,22 @@ class DistanceVectorRouting(Thread):
         """
         payload = []
         for destinationRouter, shortest_path in packet.DistanceVector.items():
-            payload.append((destinationRouter,
-                            str(shortest_path['distance']),
-                            shortest_path['nextHopRouter'],
-                            str(packet.PoisonReverse[destinationRouter])))
-        payload = map(lambda x: ':'.join(x), payload)
+            payload.append((
+                str(destinationRouter),  # Convert to string
+                f"{shortest_path['distance']:.6f}",  # Convert to string with precision
+                str(shortest_path['nextHopRouter']),  # Convert to string
+                str(packet.PoisonReverse[destinationRouter])  # Convert to string
+            ))
+
+        # Convert each tuple in the payload to a colon-separated string
+        payload = list(map(lambda x: ':'.join(x), payload))
+        # Join all payload strings with commas
         payload = ','.join(payload)
 
-        router = struct.pack('=1s', packet.Router)
+        router = struct.pack('=1s', str(packet.Router).encode('utf-8'))  # Encode Router as bytes
         payloadSize = struct.pack('=I', len(payload))
         checksum = struct.pack('=H', self.checksum(payload))
-        payload = struct.pack('='+str(len(payload))+'s', payload)
+        payload = struct.pack('='+str(len(payload))+'s', payload.encode('utf-8'))
 
         rawPacket = router + payloadSize + checksum + payload
 

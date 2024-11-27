@@ -1,5 +1,5 @@
 #!/usr/bin/python
-"""""
+"""
 @File:           ClientApp.py
 @Description:    Client Application running Distance Vector Routing algorithm.
 @Author:         Chetan Borse
@@ -13,7 +13,6 @@
 import sys
 import os
 import signal
-import atexit
 import argparse
 
 from router import Router
@@ -30,8 +29,9 @@ def shutdown(signal=None, frame=None):
     if router:
         router.stop()
         sys.exit(1)
+
+
 signal.signal(signal.SIGINT, shutdown)
-# atexit.register(shutdown)
 
 
 def ClientApp(**args):
@@ -45,6 +45,9 @@ def ClientApp(**args):
     timeout = args["timeout"]
     www = args["www"]
 
+    # Ensure the router information file is in the current directory
+    routerInformation = os.path.join(os.getcwd(), routerInformation)
+
     # Create 'Router' object
     router = Router(routerName, routerIP, routerPort, timeout, www)
 
@@ -52,7 +55,7 @@ def ClientApp(**args):
         # Start running the Distance Vector Routing algorithm
         router.start(routerInformation)
     except FileNotExistError as e:
-        print("Path not exist!")
+        print("File not found!")
         print(e)
     except RouterError as e:
         print("Unexpected exception in router!")
@@ -65,23 +68,16 @@ def ClientApp(**args):
 if __name__ == "__main__":
     # Argument parser
     parser = argparse.ArgumentParser(description='Distance Vector Routing algorithm',
-                                     prog='python \
-                                           ClientApp.py \
-                                           -n <router_name> \
-                                           -i <router_ip> \
-                                           -p <router_port> \
-                                           -f <router_information> \
-                                           -t <timeout> \
-                                           -w <www>')
+                                     prog='python ClientApp.py -n <router_id> -i <router_ip> -p <router_port> -f <router_information> -t <timeout> -w <www>')
 
-    parser.add_argument("-n", "--router_name", type=str, default="a",
-                        help="Router name, default: a")
+    parser.add_argument("-n", "--router_name", type=int, required=True,
+                        help="Router ID (numeric, from topology file)")
     parser.add_argument("-i", "--router_ip", type=str, default="127.0.0.1",
                         help="Router IP, default: 127.0.0.1")
     parser.add_argument("-p", "--router_port", type=int, default=8080,
                         help="Router port, default: 8080")
     parser.add_argument("-f", "--router_information", type=str, default="a.dat",
-                        help="Router information, default: a.dat")
+                        help="Router information (topology file), default: a.dat")
     parser.add_argument("-t", "--timeout", type=int, default=15,
                         help="Timeout, default: 15")
     parser.add_argument("-w", "--www", type=str, default=os.path.join(os.getcwd(), "data", "scenario-1"),
