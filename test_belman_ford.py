@@ -476,6 +476,28 @@ class Router:
             print(f"{dest_id:<14}{next_hop:<14}{cost}")
         print()
 
+    def disable(self, server_id):
+        """Disable the link to the given server ID."""
+        with self.lock:
+            # Check if the given server is a neighbor
+            if server_id not in self.neighbors:
+                print(f"[ERROR] Server {server_id} is not a neighbor.")
+                return
+            
+            # Remove the link from the topology and set cost to infinity
+            print(f"[COMMAND] Disabling link to Server {server_id}.")
+            self.neighbors.pop(server_id, None)
+            self.routing_table[server_id] = float('inf')
+            self.next_hop[server_id] = None
+            if self.my_id in self.topology and server_id in self.topology[self.my_id]:
+                self.topology[self.my_id][server_id] = float('inf')
+                self.topology[server_id][self.my_id] = float('inf')
+                print(f"[INFO] Link to Server {server_id} disabled. Cost set to infinity.")
+
+            # Recompute the routing table
+            print("[INFO] Recomputing routing table after disabling a link.")
+            self.recompute_routing_table()
+
     def run(self):
         """Process commands."""
         while self.running:
@@ -502,12 +524,17 @@ class Router:
                 self.step()
             elif cmd == "packets":
                 print(f"[COMMAND] Total packets received: {self.number_of_packets_received}")
+            elif cmd == "disable" and len(command) == 2:
+                try:
+                    server_id = int(command[1])
+                    self.disable(server_id)
+                except ValueError:
+                    print("[ERROR] Invalid input. Use: disable <server-ID>")
             elif cmd == "crash":
                 print("[COMMAND] Stopping the router.")
                 self.running = False
             else:
-                print("[ERROR] Unknown command. Available commands: display, update, step, packets, crash.")
-
+                print("[ERROR] Unknown command. Available commands: display, update, step, packets, disable, crash.")
 
 if __name__ == "__main__":
     topology_file = "test.txt"  # Replace with your file
