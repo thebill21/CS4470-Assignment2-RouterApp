@@ -141,12 +141,11 @@ class Router:
         with self.lock:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
-
-                # Ensure `next_hop` is updated based on shortest paths
-                self.next_hop[dest_id] = next_hops.get(dest_id, None)
+                self.next_hop[dest_id] = next_hops.get(dest_id, None)  # Set next_hop based on Bellman-Ford
 
         self.display_routing_table()
 
+    
     def bellman_ford(self, graph, source):
         """Bellman-Ford algorithm to compute shortest paths."""
         distances = {node: float('inf') for node in graph}
@@ -159,12 +158,11 @@ class Router:
                     new_cost = distances[u] + graph[u][v]
                     if new_cost < distances[v]:
                         distances[v] = new_cost
-                        # Set next hop to the first node along the path
                         next_hops[v] = u if u == source else next_hops[u]
 
-        # Ensure direct neighbors are preserved as next hops
-        for neighbor_id in self.neighbors:
-            if distances[neighbor_id] == self.neighbors[neighbor_id]:
+        # Ensure direct neighbors are always set as next_hop for immediate routes
+        for neighbor_id, cost in self.neighbors.items():
+            if distances[neighbor_id] == cost:
                 next_hops[neighbor_id] = neighbor_id
 
         return distances, next_hops
@@ -186,6 +184,17 @@ class Router:
                 except Exception as e:
                     print(f"Error sending updates to neighbor {neighbor_id}: {e}")
 
+    # def update(self, server1_id, server2_id, new_cost):
+    #     """Update the cost of a link between two servers and propagate the change."""
+    #     with self.lock:
+    #         if server1_id in self.global_graph and server2_id in self.global_graph[server1_id]:
+    #             self.global_graph[server1_id][server2_id] = new_cost
+    #             self.global_graph[server2_id][server1_id] = new_cost
+    #             print(f"Updated link cost between {server1_id} and {server2_id} to {new_cost}.")
+    #             self.step()  # Notify neighbors of the update
+    #         else:
+    #             print(f"Error: Link between {server1_id} and {server2_id} does not exist.")
+
     def update(self, server1_id, server2_id, new_cost):
         """Update the cost of a link between two servers and propagate the change."""
         with self.lock:
@@ -193,6 +202,7 @@ class Router:
                 self.global_graph[server1_id][server2_id] = new_cost
                 self.global_graph[server2_id][server1_id] = new_cost
                 print(f"Updated link cost between {server1_id} and {server2_id} to {new_cost}.")
+                self.recalculate_routes()  # Recalculate routes immediately
                 self.step()  # Notify neighbors of the update
             else:
                 print(f"Error: Link between {server1_id} and {server2_id} does not exist.")
@@ -203,7 +213,7 @@ class Router:
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
         for dest_id in sorted(self.routing_table.keys()):
-            next_hop = self.next_hop.get(dest_id, None)
+            next_hop = self.next_hop.get(dest_id)
             cost = self.routing_table[dest_id]
             next_hop_str = str(next_hop) if next_hop is not None else "None"
             cost_str = "infinity" if cost == float('inf') else f"{cost:.1f}"
