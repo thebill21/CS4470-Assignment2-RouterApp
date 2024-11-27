@@ -59,6 +59,7 @@ class Router:
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
+            # Populate nodes and initialize routing table with direct neighbors
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
@@ -68,17 +69,25 @@ class Router:
                     self.my_node = node
                     self.routing_table[node.id] = 0
                     self.next_hop[node.id] = node.id
+                else:
+                    self.routing_table[node.id] = float('inf')
+                    self.next_hop[node.id] = None
 
+            # Initialize neighbors and their costs
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
                 self.global_graph[from_id][to_id] = cost
                 self.global_graph[to_id][from_id] = cost
                 if from_id == self.my_id:
-                    self.neighbors[to_id] = cost
+                    self.routing_table[to_id] = cost
+                    self.next_hop[to_id] = to_id
                 elif to_id == self.my_id:
-                    self.neighbors[from_id] = cost
+                    self.routing_table[from_id] = cost
+                    self.next_hop[from_id] = from_id
 
+            print("Initial Routing Table:")
+            self.display_routing_table()
             print("Topology loaded successfully.\n")
         except Exception as e:
             print(f"Error loading topology: {e}")
@@ -134,7 +143,7 @@ class Router:
         self.recalculate_routes()
 
     def recalculate_routes(self):
-        """Recalculate the best routes using Bellman-Ford and honor next hop rules."""
+        """Recalculate the best routes using Bellman-Ford."""
         print("[DEBUG] Recalculating routes...")
         distances, next_hops = self.bellman_ford(self.global_graph, self.my_id)
 
@@ -142,12 +151,12 @@ class Router:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
 
-                # Enforce allowed next hop constraints
+                # Ensure next hop constraints are respected
                 if dest_id == self.my_id:
                     self.next_hop[dest_id] = self.my_id
                 elif dest_id in self.next_hop and self.next_hop[dest_id] is not None:
-                    # Only update next hop if a shorter path is discovered
-                    if cost < self.routing_table.get(dest_id, float('inf')):
+                    # Update next hop only if path is shorter
+                    if cost < self.routing_table[dest_id]:
                         self.next_hop[dest_id] = next_hops.get(dest_id)
                 else:
                     # Assign next hop if none exists
@@ -157,7 +166,7 @@ class Router:
 
     
     def bellman_ford(self, graph, source):
-        """Bellman-Ford algorithm to compute shortest paths with next hop constraints."""
+        """Bellman-Ford algorithm to compute shortest paths and honor next hop rules."""
         distances = {node: float('inf') for node in graph}
         next_hops = {}
         distances[source] = 0
@@ -165,14 +174,12 @@ class Router:
         for _ in range(len(graph) - 1):
             for u in graph:
                 for v in graph[u]:
-                    # Only consider valid next hops
-                    if v not in self.neighbors and v != source:
-                        continue
-
                     new_cost = distances[u] + graph[u][v]
                     if new_cost < distances[v]:
                         distances[v] = new_cost
-                        next_hops[v] = u if u == source else next_hops.get(u, u)
+                        # Only update next hop if no next hop exists or the path is shorter
+                        if v not in self.next_hop or self.next_hop[v] == u or new_cost < self.routing_table[v]:
+                            next_hops[v] = u if u == source else next_hops.get(u, u)
 
         return distances, next_hops
 
