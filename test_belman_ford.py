@@ -430,13 +430,29 @@ class Router:
             command = input("Enter command: ").strip().split()
             if not command:
                 continue
-            if command[0] == "display":
+            
+            # Command parsing
+            cmd = command[0].lower()
+            if cmd == "display":
+                print("[COMMAND] Displaying routing table.")
                 self.display_routing_table()
-            elif command[0] == "update" and len(command) == 4:
-                self.update(int(command[1]), int(command[2]), int(command[3]))
-            elif command[0] == "crash":
-                print("Stopping router.")
+            elif cmd == "update" and len(command) == 4:
+                try:
+                    server1_id = int(command[1])
+                    server2_id = int(command[2])
+                    new_cost = int(command[3])
+                    print(f"[COMMAND] Updating edge {server1_id} <-> {server2_id} with cost {new_cost}.")
+                    self.update(server1_id, server2_id, new_cost)
+                except ValueError:
+                    print("[ERROR] Invalid input. Use: update <server1_id> <server2_id> <new_cost>")
+            elif cmd == "step":
+                print("[COMMAND] Manually triggering routing updates.")
+                self.step()
+            elif cmd == "crash":
+                print("[COMMAND] Stopping the router.")
                 self.running = False
+            else:
+                print("[ERROR] Unknown command. Available commands: display, update, step, crash.")
 
 
 if __name__ == "__main__":
