@@ -487,7 +487,7 @@ class Router:
             next_hop = self.next_hop.get(dest_id, None)
             # Handle None for next_hop gracefully
             next_hop_display = next_hop if next_hop is not None else "None"
-            print(f"{dest_id:<14}{next_hop_display:<14}{cost}")
+            print(f"     {dest_id:<14}{next_hop_display:<14}{cost}")
         print()
 
     def disable(self, server_id):
