@@ -85,13 +85,13 @@ class Router:
             threading.Thread(target=self.handle_connection, args=(client_socket, client_address)).start()
 
     def handle_connection(self, client_socket, client_address):
-        """Handle incoming connections and exchange routing tables."""
+        """Handle incoming connections and exchange routing tables in binary format."""
         try:
-            message = client_socket.recv(1024).decode('utf-8')
+            # Receive the entire message in binary format
+            message = client_socket.recv(1024)
             if message:
-                data = json.loads(message)
-                if 'routing_table' in data:
-                    self.process_message(data)
+                # Process the binary message directly without decoding
+                self.process_message(message)
         except Exception as e:
             print(f"Error handling connection: {e}")
         finally:
