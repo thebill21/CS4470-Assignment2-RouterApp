@@ -665,7 +665,19 @@ class Router:
                 print("[ERROR] Unknown command. Available commands: display, update, step, packets, disable, crash.")
 
 if __name__ == "__main__":
-    topology_file = "test.txt"  # Replace with your file
-    update_interval = 15
-    router = Router(topology_file, update_interval)
-    router.run()
+    print("********* Distance Vector Routing Protocol **********")
+    print("Use: server -t <topology-file-name> -i <routing-update-interval>")
+    command = input("Enter server command: ").strip().split()
+    if len(command) == 5 and command[0] == "server" and command[1] == "-t" and command[3] == "-i":
+        topology_file = command[2]
+        try:
+            update_interval = int(command[4])
+            if update_interval >= 5:
+                router = Router(topology_file, update_interval)
+                router.run()
+            else:
+                print("Routing update interval must be at least 5 seconds.")
+        except ValueError:
+            print("Invalid routing update interval. Please enter a valid integer.")
+    else:
+        print("Invalid command. Use the format: server -t <topology-file-name> -i <routing-update-interval>")
