@@ -140,9 +140,18 @@ class Router:
         threading.Thread(target=periodic_update, daemon=True).start()
 
     def process_message(self, message):
-        """Process incoming routing table updates."""
+        """Process incoming routing table updates or commands."""
         self.number_of_packets_received += 1
         print(f"Processing message: {message}")
+        
+        if message.get("command") == "update":
+            server1_id = int(message["server1_id"])
+            server2_id = int(message["server2_id"])
+            new_cost = float(message["new_cost"])
+            print(f"Received update command: Update link between {server1_id} and {server2_id} to {new_cost}")
+            self.update(server1_id, server2_id, new_cost)
+            return
+
         sender_id = int(message.get("id"))
         received_table = {int(k): v for k, v in message.get("routing_table", {}).items()}
 
@@ -214,6 +223,57 @@ class Router:
             if node.id == node_id:
                 return node
         return None
+    
+    def update(self, server1_id, server2_id, new_cost):
+        """
+        Update the cost of a link between two servers and propagate the change bi-directionally.
+        """
+        print(f"Updating link cost between {server1_id} and {server2_id} to {new_cost}...")
+        with self.lock:
+            if server1_id == self.my_id or server2_id == self.my_id:
+                # Determine the neighbor ID for the link
+                neighbor_id = server2_id if server1_id == self.my_id else server1_id
+                
+                # Update the cost in the routing table and neighbors
+                if neighbor_id in self.neighbors:
+                    self.neighbors[neighbor_id] = new_cost
+                    self.routing_table[neighbor_id] = new_cost
+                    self.next_hop[neighbor_id] = neighbor_id
+                    
+                    print(f"Link cost updated locally. New cost to server {neighbor_id}: {new_cost}")
+                    
+                    # Notify the neighbor to update its view of the link
+                    self.notify_neighbor_update(neighbor_id, server1_id, server2_id, new_cost)
+                    
+                    # Trigger an immediate update to neighbors
+                    self.step()
+                else:
+                    print(f"Error: Link between {self.my_id} and {neighbor_id} does not exist.")
+            else:
+                print(f"Error: Link between {server1_id} and {server2_id} does not involve this router.")
+
+    def notify_neighbor_update(self, neighbor_id, server1_id, server2_id, new_cost):
+        """
+        Notify the neighbor to update the cost of the link bi-directionally.
+        """
+        neighbor = self.get_node_by_id(neighbor_id)
+        if not neighbor:
+            print(f"Error: Neighbor {neighbor_id} not found.")
+            return
+
+        message = {
+            "command": "update",
+            "server1_id": server1_id,
+            "server2_id": server2_id,
+            "new_cost": new_cost
+        }
+        print(f"Notifying neighbor {neighbor_id} to update link cost...")
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((neighbor.ip, neighbor.port))
+                s.sendall(json.dumps(message).encode())
+        except Exception as e:
+            print(f"Error notifying neighbor {neighbor_id}: {e}")
 
     def run(self):
         """Run the router to process commands."""
