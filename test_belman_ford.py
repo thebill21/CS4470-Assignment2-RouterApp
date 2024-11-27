@@ -97,6 +97,7 @@ class Router:
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
+            # Load nodes
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
@@ -111,12 +112,12 @@ class Router:
                     self.next_hop[node.id] = None
                 print(f"Loaded server {node.id}: IP={node.ip}, Port={node.port}")
 
+            # Load links
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
-                self.topology[from_id][to_id] = cost  # Store in-memory topology
-                self.topology[to_id][from_id] = cost  # Ensure symmetry
-
+                self.topology[from_id][to_id] = cost
+                self.topology[to_id][from_id] = cost
                 if from_id == self.my_id:
                     self.neighbors[to_id] = cost
                     self.routing_table[to_id] = cost
@@ -126,6 +127,10 @@ class Router:
                     self.routing_table[from_id] = cost
                     self.next_hop[from_id] = from_id
                 print(f"Link loaded: {from_id} <-> {to_id} with cost {cost}")
+
+            # Apply Bellman-Ford algorithm after loading topology
+            print("Applying Bellman-Ford algorithm for initial routing table computation.")
+            self.recompute_routing_table()
 
             print("Topology loaded successfully.\n")
         except Exception as e:
@@ -218,44 +223,85 @@ class Router:
     #         self.step()  # Trigger routing updates to neighbors
 
     def process_message(self, message):
-        """Process incoming messages, including topology updates."""
-        self.number_of_packets_received += 1  # Increment packet count for statistics
+        """Process incoming messages, including topology updates and routing updates."""
+        self.number_of_packets_received += 1  # Increment the packet count for statistics
 
         if "command" in message:
-            # Handle topology update commands
+            # Handle topology update command
             if message["command"] == "update_topology":
                 server1_id = int(message["server1_id"])
                 server2_id = int(message["server2_id"])
                 new_cost = float(message["new_cost"])
-                origin_id = message.get("origin_id")
+                origin_id = message.get("origin_id", None)  # Originating router of the update
 
-                print(f"Received topology update command: Edge {server1_id} <-> {server2_id} with cost {new_cost} from origin {origin_id}.")
-
-                # Step 1: Update local in-memory topology for both directions
+                print(f"Received topology update command: {server1_id} <-> {server2_id} with cost {new_cost}.")
+                
+                # Update local topology
                 with self.lock:
                     self.topology[server1_id][server2_id] = new_cost
                     self.topology[server2_id][server1_id] = new_cost
-                    print(f"Updated local topology: edge {server1_id} <-> {server2_id} now has cost {new_cost}.")
 
-                # Step 2: Broadcast the topology update to all neighbors (excluding the origin)
+                # Forward the update to other neighbors if it's not the originating router
                 if origin_id != self.my_id:
-                    print(f"Forwarding topology update to neighbors (excluding origin {origin_id}).")
-                    for neighbor_id in self.neighbors:
-                        neighbor = self.get_node_by_id(neighbor_id)
-                        if neighbor:
-                            forward_message = {
-                                "command": "update_topology",
-                                "server1_id": server1_id,
-                                "server2_id": server2_id,
-                                "new_cost": new_cost,
-                                "origin_id": origin_id  # Preserve the original origin ID
-                            }
-                            self.send_message(neighbor, forward_message)
+                    print(f"Forwarding topology update for edge {server1_id} <-> {server2_id} to neighbors.")
+                    self.broadcast_topology_update(server1_id, server2_id, new_cost, origin_id)
 
-                # Step 3: Recompute routing table after applying the update
-                print("Recomputing routing table after received topology update.")
+                # Recompute routing table with the updated topology
+                print("Recomputing routing table after topology update.")
                 self.recompute_routing_table()
                 return
+
+            # Handle routing table updates from neighbors
+            if message["command"] == "routing_update":
+                sender_id = int(message["id"])  # Sender's ID
+                received_table = {
+                    int(k): float(v) for k, v in message.get("routing_table", {}).items()
+                }  # Convert table keys/values to integers/floats
+
+                print(f"Received routing update from Router {sender_id}: {received_table}")
+
+                # Apply received routing table
+                updated = False
+                with self.lock:
+                    for dest_id, received_cost in received_table.items():
+                        if dest_id == self.my_id:
+                            continue  # Skip routes to self
+
+                        # Calculate new cost through the sender
+                        cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+                        new_cost = cost_to_sender + received_cost
+
+                        # Update if the new route is better
+                        if new_cost < self.routing_table.get(dest_id, float('inf')):
+                            print(f"Updating route to {dest_id}: "
+                                f"cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
+                            self.routing_table[dest_id] = new_cost
+                            self.next_hop[dest_id] = sender_id
+                            updated = True
+
+                if updated:
+                    print("Routing table updated based on received routing update.")
+                    self.display_routing_table()
+                    self.step()  # Propagate updated routing table to neighbors
+                return
+
+        # Handle other commands or invalid message
+        print("Unknown or unsupported command received. Ignoring message.")
+
+    def broadcast_topology_update(self, server1_id, server2_id, new_cost, origin_id):
+        """Broadcast topology update to all neighbors except the origin."""
+        update_message = {
+            "command": "update_topology",
+            "server1_id": server1_id,
+            "server2_id": server2_id,
+            "new_cost": new_cost,
+            "origin_id": origin_id
+        }
+        for neighbor_id in self.neighbors:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor and neighbor_id != origin_id:  # Avoid sending back to the origin
+                print(f"Forwarding topology update to neighbor {neighbor.id}.")
+                self.send_message(neighbor, update_message)
 
     def step(self):
         """Send routing updates to neighbors."""
@@ -375,10 +421,10 @@ class Router:
             self.recompute_routing_table()
 
     def recompute_routing_table(self):
-        """Recompute the routing table from scratch after a topology update."""
+        """Recompute the routing table using Bellman-Ford algorithm."""
         print("Recomputing routing table...")
         with self.lock:
-            # Reset routing table entries
+            # Reset routing table
             for node in self.nodes:
                 if node.id == self.my_id:
                     self.routing_table[node.id] = 0  # Cost to self is 0
@@ -390,8 +436,13 @@ class Router:
                     self.routing_table[node.id] = float('inf')  # All others are unreachable
                     self.next_hop[node.id] = None
 
-            # Reapply the Bellman-Ford algorithm
-            self.step()
+            # Bellman-Ford algorithm
+            for _ in range(len(self.nodes) - 1):  # Repeat |V|-1 times
+                for from_id, neighbors in self.topology.items():
+                    for to_id, cost in neighbors.items():
+                        if self.routing_table[from_id] + cost < self.routing_table[to_id]:
+                            self.routing_table[to_id] = self.routing_table[from_id] + cost
+                            self.next_hop[to_id] = self.next_hop[from_id]
 
         print("Routing table recomputed.")
         self.display_routing_table()
