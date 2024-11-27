@@ -500,7 +500,9 @@ class Router:
         print("Destination\tNext Hop\tCost")
         for dest_id, cost in self.routing_table.items():
             next_hop = self.next_hop.get(dest_id, None)
-            print(f"{dest_id:<14}{next_hop:<14}{cost}")
+            # Handle None for next_hop gracefully
+            next_hop_display = next_hop if next_hop is not None else "None"
+            print(f"{dest_id:<14}{next_hop_display:<14}{cost}")
         print()
 
     def disable(self, server1_id, server2_id):
