@@ -1,3 +1,6 @@
+# School / Organization: California State University, Los Angeles
+# Course: CS 4470 - Fall 2024
+# Professor: Zilong Ye
 # Team 28: 
 # Tuan Khai Tran, CIN: 402795338
 # Jiahao Li, CIN: <Jiahao will add his CIN at his version of submission>
