@@ -234,8 +234,19 @@ class Router:
                 new_cost = float(message["new_cost"])
                 origin_id = message.get("origin_id", None)  # Originating router of the update
 
+                # Unique identifier for this update
+                update_id = (server1_id, server2_id, new_cost)
+
+                # Skip if this update has already been processed
+                if update_id in self.processed_updates:
+                    print(f"[INFO] Already processed update {update_id}. Skipping.")
+                    return
+
                 print(f"Received topology update command: {server1_id} <-> {server2_id} with cost {new_cost}.")
                 
+                # Mark the update as processed
+                self.processed_updates.add(update_id)
+
                 # Update local topology
                 with self.lock:
                     self.topology[server1_id][server2_id] = new_cost
