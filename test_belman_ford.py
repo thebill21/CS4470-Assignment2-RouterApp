@@ -541,6 +541,33 @@ class Router:
         print("[INFO] Recomputing routing table after disabling the link.")
         self.recompute_routing_table()
 
+    def crash(self):
+        """Simulate server crash by closing all connections."""
+        print("[COMMAND] Simulating server crash. Closing all connections.")
+        
+        # Step 1: Notify all neighbors about the crash
+        for neighbor_id in list(self.neighbors.keys()):
+            print(f"[INFO] Notifying neighbor {neighbor_id} of server crash.")
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor:
+                message = {
+                    "command": "server_crash",
+                    "crashed_server_id": self.my_id
+                }
+                self.send_message(neighbor, message)
+        
+        # Step 2: Broadcast the crash event
+        print("[INFO] Broadcasting crash event to neighbors.")
+        for neighbor_id in list(self.neighbors.keys()):
+            self.disable(self.my_id, neighbor_id)
+        
+        # Step 3: Clear local data structures and terminate
+        self.running = False  # Stop all threads
+        self.neighbors.clear()
+        self.routing_table.clear()
+        self.next_hop.clear()
+        print("[INFO] Server crash simulated. Exiting...")
+
     def run(self):
         """Process commands."""
         while self.running:
@@ -575,8 +602,9 @@ class Router:
                 except ValueError:
                     print("[ERROR] Invalid input. Use: disable <server_id>")
             elif cmd == "crash":
-                print("[COMMAND] Stopping the router.")
-                self.running = False
+                print("[COMMAND] Crashing the server.")
+                self.crash()
+                break
             else:
                 print("[ERROR] Unknown command. Available commands: display, update, step, packets, disable, crash.")
 
