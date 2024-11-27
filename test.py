@@ -152,19 +152,75 @@ class Router:
 
     def update(self, server1_id, server2_id, new_cost):
         """Update the cost of a link between two servers."""
-        with self.lock:
-            if server1_id == self.my_id or server2_id == self.my_id:
-                target_id = server2_id if server1_id == self.my_id else server1_id
-                target_node = self.get_node_by_id(target_id)
-                if target_node in self.neighbors:
+        if server1_id == self.my_id or server2_id == self.my_id:
+            target_id = server2_id if server1_id == self.my_id else server1_id
+            with self.lock:
+                # Update the cost in the routing table
+                if target_id in self.neighbors:
+                    print(f"[DEBUG] Updating link cost between {self.my_id} and {target_id} to {new_cost}.")
                     self.routing_table[target_id] = new_cost
-                    self.next_hop[target_id] = target_id
-                    print(f"Updated cost to server {target_id} to {new_cost}")
-                    self.step()
+
+                    # Inform the neighbor about the updated cost
+                    neighbor = self.get_node_by_id(target_id)
+                    if neighbor:
+                        message = {
+                            "id": self.my_id,
+                            "routing_table": self.routing_table,
+                            "type": "update",
+                            "updated_link": (self.my_id, target_id, new_cost)
+                        }
+                        self.send_message(neighbor, message)
+
+                    # Trigger recalculation after update
+                    self.recalculate_routes()
+                    self.display_routing_table()
                 else:
-                    print("Can only update cost to direct neighbors.")
-            else:
-                print("This server is not involved in the specified link.")
+                    print(f"[ERROR] Server {target_id} is not a direct neighbor.")
+        else:
+            print(f"[ERROR] This server is not involved in the link between {server1_id} and {server2_id}.")
+
+    def recalculate_routes(self):
+        """Recalculate the routing table based on current link states."""
+        print("[DEBUG] Recalculating routes...")
+        with self.lock:
+            for dest_id in self.routing_table.keys():
+                if dest_id == self.my_id:
+                    continue
+
+                best_cost = float('inf')
+                best_next_hop = None
+
+                for neighbor_id in self.neighbors:
+                    cost_to_neighbor = self.routing_table.get(neighbor_id, float('inf'))
+                    neighbor_cost_to_dest = self.get_neighbor_cost_to_dest(neighbor_id, dest_id)
+                    if cost_to_neighbor == float('inf') or neighbor_cost_to_dest == float('inf'):
+                        continue
+
+                    total_cost = cost_to_neighbor + neighbor_cost_to_dest
+                    if total_cost < best_cost:
+                        best_cost = total_cost
+                        best_next_hop = neighbor_id
+
+                self.routing_table[dest_id] = best_cost
+                self.next_hop[dest_id] = best_next_hop
+
+        self.display_routing_table()
+
+    def get_neighbor_cost_to_dest(self, neighbor_id, dest_id):
+        """
+        Get the cost from a neighbor to a specific destination.
+        Args:
+            neighbor_id (int): The ID of the neighbor.
+            dest_id (int): The ID of the destination.
+
+        Returns:
+            float: The cost from the neighbor to the destination. Returns infinity if not reachable.
+        """
+        neighbor = self.get_node_by_id(neighbor_id)
+        if neighbor and neighbor_id in self.neighbors:
+            # Check if neighbor has a route to the destination
+            return self.routing_table.get(dest_id, float('inf'))
+        return float('inf')
 
     def disable(self, server_id):
         """Disable the connection with a neighbor."""
@@ -183,19 +239,22 @@ class Router:
         self.number_of_packets_received += 1  # Increment for each received packet
         print(f"Processing message: {message}")
 
-        try:
-            sender_id = int(message.get("id"))  # Ensure sender_id is an integer
-            received_table = {int(k): float(v) for k, v in message.get("routing_table", {}).items()}  # Convert keys and values
-        except (ValueError, TypeError) as e:
-            print(f"Error processing message: {e}")
-            return
+        sender_id = int(message.get("id"))  # Ensure sender_id is an integer
+        received_table = {int(k): v for k, v in message.get("routing_table", {}).items()}  # Convert keys to integers
+        msg_type = message.get("type", "update")  # Default to "update" if type is not specified
+        updated_link = message.get("updated_link", None)
 
-        if sender_id is None or received_table is None:
-            print("Message missing required fields: 'id' or 'routing_table'.")
-            return
-
-        updated = False
         with self.lock:
+            if msg_type == "update" and updated_link:
+                # Update direct link cost
+                from_id, to_id, cost = updated_link
+                if from_id == self.my_id or to_id == self.my_id:
+                    neighbor_id = to_id if from_id == self.my_id else from_id
+                    self.routing_table[neighbor_id] = cost
+                    print(f"[DEBUG] Updated direct link cost with neighbor {neighbor_id} to {cost}.")
+
+            # Process the routing table for distance vector updates
+            updated = False
             for dest_id, received_cost in received_table.items():
                 if dest_id == self.my_id:
                     continue
@@ -206,15 +265,15 @@ class Router:
 
                 # Update only if new cost is better
                 if new_cost < self.routing_table.get(dest_id, float('inf')):
-                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
+                    print(f"[DEBUG] Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
                     self.routing_table[dest_id] = new_cost
                     self.next_hop[dest_id] = sender_id
                     updated = True
 
-        if updated:
-            print("Routing table updated based on received message.")
-            self.display_routing_table()
-            self.step()  # Send updates to neighbors after a change
+            if updated:
+                print("[DEBUG] Routing table updated based on received message.")
+                self.recalculate_routes()
+                self.display_routing_table()
 
     def get_node_by_id(self, node_id):
         """Fetches a node by its ID."""
