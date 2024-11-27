@@ -142,11 +142,8 @@ class Router:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
 
-                # Ensure next hop for direct neighbors remains unchanged
-                if dest_id in self.neighbors:
-                    self.next_hop[dest_id] = dest_id
-                else:
-                    self.next_hop[dest_id] = next_hops.get(dest_id, None)
+                # Ensure `next_hop` is updated based on shortest paths
+                self.next_hop[dest_id] = next_hops.get(dest_id, None)
 
         self.display_routing_table()
 
@@ -162,11 +159,13 @@ class Router:
                     new_cost = distances[u] + graph[u][v]
                     if new_cost < distances[v]:
                         distances[v] = new_cost
-                        next_hops[v] = u
+                        # Set next hop to the first node along the path
+                        next_hops[v] = u if u == source else next_hops[u]
 
         # Ensure direct neighbors are preserved as next hops
         for neighbor_id in self.neighbors:
-            next_hops[neighbor_id] = neighbor_id
+            if distances[neighbor_id] == self.neighbors[neighbor_id]:
+                next_hops[neighbor_id] = neighbor_id
 
         return distances, next_hops
 
