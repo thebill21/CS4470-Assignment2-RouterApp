@@ -229,6 +229,21 @@ class Router:
         self.number_of_packets_received += 1  # Increment the packet count for statistics
 
         # Handle topology update command
+        if message.get("command") == "server_crash":
+            crashed_server_id = message.get("crashed_server_id")
+            print(f"[INFO] Received crash notification for Server {crashed_server_id}.")
+
+            # Update topology to set link cost to infinity
+            with self.lock:
+                if crashed_server_id in self.neighbors:
+                    print(f"[INFO] Handling crash: Removing link to Server {crashed_server_id}.")
+                    self.topology[self.my_id][crashed_server_id] = float('inf')
+                    self.topology[crashed_server_id][self.my_id] = float('inf')
+                    self.neighbors.pop(crashed_server_id, None)
+                    self.recompute_routing_table()
+            return
+
+
         if "command" in message:
             if message["command"] == "update_topology":
                 server1_id = int(message["server1_id"])
@@ -556,10 +571,10 @@ class Router:
                 }
                 self.send_message(neighbor, message)
         
-        # Step 2: Broadcast the crash event
+        # Step 2: Disable links to all neighbors
         print("[INFO] Broadcasting crash event to neighbors.")
         for neighbor_id in list(self.neighbors.keys()):
-            self.disable(self.my_id, neighbor_id)
+            self.disable(neighbor_id)  # Call disable for each neighbor
         
         # Step 3: Clear local data structures and terminate
         self.running = False  # Stop all threads
