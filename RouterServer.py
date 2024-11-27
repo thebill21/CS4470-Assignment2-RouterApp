@@ -482,7 +482,7 @@ class Router:
             command = input("Enter command: ").strip().split()
             if not command:
                 continue
-            
+
             # Command parsing
             cmd = command[0].lower()
             if cmd == "display":
@@ -500,11 +500,13 @@ class Router:
             elif cmd == "step":
                 print("[COMMAND] Manually triggering routing updates.")
                 self.step()
+            elif cmd == "packets":
+                print(f"[COMMAND] Total packets received: {self.number_of_packets_received}")
             elif cmd == "crash":
                 print("[COMMAND] Stopping the router.")
                 self.running = False
             else:
-                print("[ERROR] Unknown command. Available commands: display, update, step, crash.")
+                print("[ERROR] Unknown command. Available commands: display, update, step, packets, crash.")
 
 
 if __name__ == "__main__":
