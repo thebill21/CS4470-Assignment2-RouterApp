@@ -134,20 +134,30 @@ class Router:
         self.recalculate_routes()
 
     def recalculate_routes(self):
-        """Recalculate the best routes using Bellman-Ford."""
+        """Recalculate the best routes using Bellman-Ford and honor next hop rules."""
         print("[DEBUG] Recalculating routes...")
         distances, next_hops = self.bellman_ford(self.global_graph, self.my_id)
 
         with self.lock:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
-                self.next_hop[dest_id] = next_hops.get(dest_id, None)  # Set next_hop based on Bellman-Ford
+
+                # Enforce allowed next hop constraints
+                if dest_id == self.my_id:
+                    self.next_hop[dest_id] = self.my_id
+                elif dest_id in self.next_hop and self.next_hop[dest_id] is not None:
+                    # Only update next hop if a shorter path is discovered
+                    if cost < self.routing_table.get(dest_id, float('inf')):
+                        self.next_hop[dest_id] = next_hops.get(dest_id)
+                else:
+                    # Assign next hop if none exists
+                    self.next_hop[dest_id] = next_hops.get(dest_id)
 
         self.display_routing_table()
 
     
     def bellman_ford(self, graph, source):
-        """Bellman-Ford algorithm to compute shortest paths."""
+        """Bellman-Ford algorithm to compute shortest paths with next hop constraints."""
         distances = {node: float('inf') for node in graph}
         next_hops = {}
         distances[source] = 0
@@ -155,15 +165,14 @@ class Router:
         for _ in range(len(graph) - 1):
             for u in graph:
                 for v in graph[u]:
+                    # Only consider valid next hops
+                    if v not in self.neighbors and v != source:
+                        continue
+
                     new_cost = distances[u] + graph[u][v]
                     if new_cost < distances[v]:
                         distances[v] = new_cost
-                        next_hops[v] = u if u == source else next_hops[u]
-
-        # Ensure direct neighbors are always set as next_hop for immediate routes
-        for neighbor_id, cost in self.neighbors.items():
-            if distances[neighbor_id] == cost:
-                next_hops[neighbor_id] = neighbor_id
+                        next_hops[v] = u if u == source else next_hops.get(u, u)
 
         return distances, next_hops
 
