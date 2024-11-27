@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 import json
+import struct
 from collections import defaultdict
 
 class Node:
@@ -103,19 +104,44 @@ class Router:
             self.step()
 
     def process_message(self, message):
-        """Process incoming routing table updates."""
-        sender_id = message['id']
-        received_table = message['routing_table']
-        updated = False
-        with self.lock:
-            for dest, cost in received_table.items():
-                dest = int(dest)
-                cost = float(cost)
-                if dest not in self.routing_table[sender_id] or cost < self.routing_table[sender_id].get(dest, float('inf')):
-                    self.routing_table[sender_id][dest] = cost
-                    updated = True
-        if updated:
-            self.recalculate_routes()
+        """Process incoming routing table updates in binary format."""
+        try:
+            # Extract header
+            num_fields, sender_port = struct.unpack("!HH", message[:4])
+            sender_ip = socket.inet_ntoa(message[4:8])
+
+            # Sender details
+            sender_id = None
+            for node in self.nodes:
+                if node.ip == sender_ip and node.port == sender_port:
+                    sender_id = node.id
+                    break
+
+            if sender_id is None:
+                print("Invalid sender details. Ignoring message.")
+                return
+
+            # Parse fields
+            offset = 8
+            updated = False
+            with self.lock:
+                for _ in range(num_fields):
+                    dest_ip = socket.inet_ntoa(message[offset:offset+4])
+                    dest_port, dest_id, cost = struct.unpack("!HHH", message[offset+4:offset+10])
+                    offset += 10
+
+                    # Update routing table
+                    current_cost = self.routing_table[self.my_id].get(dest_id, float('inf'))
+                    new_cost = self.routing_table[self.my_id].get(sender_id, float('inf')) + cost
+                    if new_cost < current_cost:
+                        self.routing_table[self.my_id][dest_id] = new_cost
+                        updated = True
+
+            if updated:
+                print("[DEBUG] Routing table updated based on received message.")
+                self.recalculate_routes()
+        except Exception as e:
+            print(f"Error processing message: {e}")
 
     def recalculate_routes(self):
         """Recalculate the best routes."""
@@ -123,41 +149,59 @@ class Router:
         self.display_routing_table()
 
     def display_routing_table(self):
-        """Display the routing table."""
+        """Display the routing table with all possible paths."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
-        for dest, next_hops in self.routing_table.items():
-            for next_hop, cost in next_hops.items():
-                cost_str = "infinity" if cost == float('inf') else cost
-                print(f"{dest:<14}{next_hop:<14}{cost_str}")
+        with self.lock:
+            for dest_id in sorted(self.routing_table.keys()):
+                for next_hop, cost in self.routing_table[dest_id].items():
+                    cost_str = "infinity" if cost == float('inf') else cost
+                    print(f"{dest_id:<14}{next_hop:<14}{cost_str}")
         print()
 
     def step(self):
-        """Send routing updates to neighbors."""
-        message = {
-            "id": self.my_id,
-            "routing_table": self.routing_table[self.my_id]
-        }
-        for neighbor_id in self.neighbors:
-            neighbor = next(node for node in self.nodes if node.id == neighbor_id)
-            try:
+        """Send routing updates to neighbors using binary format."""
+        try:
+            message_header = struct.pack(
+                "!HH4s", len(self.routing_table[self.my_id]), self.my_node.port, socket.inet_aton(self.my_ip)
+            )
+            message_body = b""
+            for dest_id, cost in self.routing_table[self.my_id].items():
+                dest_node = next((node for node in self.nodes if node.id == dest_id), None)
+                if dest_node:
+                    message_body += struct.pack(
+                        "!4sHHH",
+                        socket.inet_aton(dest_node.ip),
+                        dest_node.port,
+                        dest_node.id,
+                        int(cost) if cost < float('inf') else 65535,
+                    )
+
+            message = message_header + message_body
+            for neighbor_id in self.neighbors:
+                neighbor = next(node for node in self.nodes if node.id == neighbor_id)
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.connect((neighbor.ip, neighbor.port))
-                    s.sendall(json.dumps(message).encode())
-            except Exception as e:
-                print(f"Error sending updates to neighbor {neighbor_id}: {e}")
+                    s.sendall(message)
+            print("Routing updates sent.")
+        except Exception as e:
+            print(f"Error during step: {e}")
 
     def update(self, server1_id, server2_id, new_cost):
-        """Update link cost."""
+        """Update the cost of a link."""
         with self.lock:
             if server1_id == self.my_id or server2_id == self.my_id:
                 target_id = server2_id if server1_id == self.my_id else server1_id
                 if target_id in self.neighbors:
                     self.routing_table[self.my_id][target_id] = new_cost
+                    print(f"[DEBUG] Link cost updated: {self.my_id} <-> {target_id}, Cost: {new_cost}")
                     self.recalculate_routes()
+                    self.step()
                 else:
-                    print("Can only update direct neighbors.")
+                    print("[ERROR] Can only update costs to direct neighbors.")
+            else:
+                print("[ERROR] This server is not involved in the specified link.")
 
     def run(self):
         """Run the router command interface."""
