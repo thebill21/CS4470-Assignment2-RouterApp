@@ -213,13 +213,21 @@ class Router:
             print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
 
     def update(self, server1_id, server2_id, new_cost):
-        """Update a link cost."""
-        if server1_id == self.my_id or server2_id == self.my_id:
-            neighbor_id = server2_id if server1_id == self.my_id else server1_id
-            self.neighbors[neighbor_id] = new_cost
-            self.routing_table[neighbor_id] = new_cost
-            print(f"Link cost updated. Triggering updates.")
-            self.step()
+        """Update a link cost bi-directionally."""
+        with self.lock:
+            # Update cost from server1_id to server2_id
+            if server1_id == self.my_id:
+                self.neighbors[server2_id] = new_cost
+                self.routing_table[server2_id] = new_cost
+                self.next_hop[server2_id] = server2_id  # Update next hop for this link
+            elif server2_id == self.my_id:
+                self.neighbors[server1_id] = new_cost
+                self.routing_table[server1_id] = new_cost
+                self.next_hop[server1_id] = server1_id  # Update next hop for this link
+            
+            # Broadcast the update to neighbors
+            print(f"Updated link cost between {server1_id} and {server2_id} to {new_cost}.")
+            self.step()  # Trigger routing table updates after the cost change
 
     def display_routing_table(self):
         """Display the routing table."""
