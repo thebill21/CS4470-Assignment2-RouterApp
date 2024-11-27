@@ -143,14 +143,16 @@ class Router:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
                 if dest_id == self.my_id:
+                    # Next hop to self is always itself
                     self.next_hop[dest_id] = self.my_id
-                elif cost < float('inf') and dest_id != self.my_id:
-                    # Trace back the path to find the direct next hop
+                elif cost < float('inf'):
+                    # Trace back from destination to find the immediate next hop
                     next_hop = dest_id
                     while predecessors[next_hop] != self.my_id:
                         next_hop = predecessors[next_hop]
                     self.next_hop[dest_id] = next_hop
                 else:
+                    # No route to destination
                     self.next_hop[dest_id] = None
         self.display_routing_table()
 
