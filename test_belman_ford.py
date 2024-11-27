@@ -251,6 +251,33 @@ class Router:
                 self.update(server2_id, server1_id, new_cost)
 
                 return
+            
+        if message.get("command") == "disable_link":
+            server1_id = int(message["server1_id"])
+            server2_id = int(message["server2_id"])
+            origin_id = int(message.get("origin_id", -1))
+
+            print(f"[INFO] Received disable command for link: {server1_id} <-> {server2_id}.")
+
+            # Avoid processing the same disable multiple times
+            disable_key = (server1_id, server2_id)
+            if disable_key in self.processed_updates:
+                print(f"[INFO] Already processed disable for link {disable_key}. Skipping.")
+                return
+            self.processed_updates.add(disable_key)
+
+            # Perform the disable locally
+            self.disable(server1_id, server2_id)
+
+            # Forward the disable message to neighbors, excluding the origin
+            if origin_id != self.my_id:
+                print(f"[INFO] Forwarding disable command for link {server1_id} <-> {server2_id}.")
+                for neighbor_id in self.neighbors:
+                    if neighbor_id != origin_id:
+                        neighbor = self.get_node_by_id(neighbor_id)
+                        if neighbor:
+                            self.send_message(neighbor, message)
+            return
 
         # Handle routing table updates
         if "id" in message and "routing_table" in message:
@@ -476,17 +503,40 @@ class Router:
             print(f"{dest_id:<14}{next_hop:<14}{cost}")
         print()
 
-    def disable(self, server_id):
-        """Disable the link to the given server ID."""
+    def disable(self, server1_id, server2_id):
+        """Disable a link between two servers."""
+        print(f"[INFO] Disabling link: Server {server1_id} <-> Server {server2_id}.")
+        
+        # Step 1: Update the topology with infinite cost
         with self.lock:
-            # Check if the given server is a neighbor
-            if server_id not in self.neighbors:
-                print(f"[ERROR] Server {server_id} is not a neighbor.")
-                return
+            if server1_id in self.topology and server2_id in self.topology[server1_id]:
+                self.topology[server1_id][server2_id] = float('inf')
+                self.topology[server2_id][server1_id] = float('inf')
+                print(f"[DEBUG] Updated topology to reflect disabled link: {dict(self.topology)}")
+                
+                # Remove from neighbors if directly connected
+                if server2_id in self.neighbors:
+                    print(f"[INFO] Removing Server {server2_id} from neighbors.")
+                    del self.neighbors[server2_id]
+                elif server1_id in self.neighbors and server1_id == self.my_id:
+                    del self.neighbors[server1_id]
 
-            # Convert the disable command into an update with infinity cost
-            print(f"[COMMAND] Disabling link to Server {server_id}.")
-            self.update(self.my_id, server_id, float('inf'))  # Update my link to the server
+        # Step 2: Broadcast the disable action as a topology update
+        disable_message = {
+            "command": "disable_link",
+            "server1_id": server1_id,
+            "server2_id": server2_id,
+            "origin_id": self.my_id
+        }
+        for neighbor_id in self.neighbors:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor:
+                print(f"[DEBUG] Broadcasting disable to neighbor {neighbor.id}.")
+                self.send_message(neighbor, disable_message)
+
+        # Step 3: Recompute the routing table
+        print("[INFO] Recomputing routing table after disabling the link.")
+        self.recompute_routing_table()
 
     def run(self):
         """Process commands."""
@@ -517,9 +567,10 @@ class Router:
             elif cmd == "disable" and len(command) == 2:
                 try:
                     server_id = int(command[1])
-                    self.disable(server_id)
+                    print(f"[COMMAND] Disabling link to Server {server_id}.")
+                    self.disable(self.my_id, server_id)
                 except ValueError:
-                    print("[ERROR] Invalid input. Use: disable <server-ID>")
+                    print("[ERROR] Invalid input. Use: disable <server_id>")
             elif cmd == "crash":
                 print("[COMMAND] Stopping the router.")
                 self.running = False
