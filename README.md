@@ -44,7 +44,7 @@ or can just run it in terminal by 'python (directory-address)\dv.py'
 or cd to the code directory and type command 'python dv.py'
 
 it will then prompt you to enter the server command, which is:
-server -t (topology-text-file) -i (interval-message-time)
+"server -t (topology-text-file) -i (interval-message-time)"
 it the best to have the topology file in the same directory with .py file, when type command, don't forget '.txt'
 interval message time will be sleep time between message sent.
 
