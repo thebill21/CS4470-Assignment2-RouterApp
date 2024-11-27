@@ -17,9 +17,9 @@ text file 'server1_init.txt' to 'server2_init.txt' are topology files for each c
 #### <server-ID> <server-IP> <server-port>
 #### <server-ID1> <server-ID2> <cost>
  
-##### num-servers: total number of servers in the network.
-##### num-neighbors: the number of directly linked neighbors of the server.
-##### server-ID, server-ID1, server-ID2: a unique identifier for a server, which is assigned by you.
+#### num-servers: total number of servers in the network.
+#### num-neighbors: the number of directly linked neighbors of the server.
+#### server-ID, server-ID1, server-ID2: a unique identifier for a server, which is assigned by you.
 
 e.g. 'server1_init.txt'
 #### 4                           <num-servers>
