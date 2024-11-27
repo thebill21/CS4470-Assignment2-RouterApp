@@ -32,11 +32,11 @@ e.g. 'server1_init.txt'
 #### 1 3 4
 #### 1 4 5
 
-#Text file edit before use:
+# Text file edit before use:
 before you run the program, make sure that you have you specific computer's IP and port number you desire to use.
 double check the edge and cost, please note that the cost is bi-directional edge 1 - 3 will be equal to edge 3 - 1.
 
-#To run program:
+# To run program:
 simply run the dv.py file with either your code editor / IDE
 in my case, just hit run on VSCode and choose python compiler.
 or can just run it in terminal by 'python <directory>\dv.py'
