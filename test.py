@@ -22,10 +22,13 @@ class Node:
 class Router:
     """Distance Vector Routing Protocol Router."""
     def __init__(self, topology_file, update_interval):
+        print("[DEBUG] Entering Router.__init__")
+        
+        # Basic property initialization
         self.my_ip = self.get_my_ip()
         self.my_id = None
         self.my_node = None
-        self.nodes = []  # Initialize nodes list
+        self.nodes = []
         self.topology_file = topology_file
         self.update_interval = update_interval
         self.routing_table = {}
@@ -33,153 +36,170 @@ class Router:
         self.next_hop = {}
         self.running = True
         self.lock = threading.Lock()
-        self.number_of_packets_received = 0  # Correctly initialize it here
+        self.number_of_packets_received = 0
 
-        print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
+        # Debug info
+        print(f"[DEBUG] Router initialized with IP: {self.my_ip}")
+        print(f"[DEBUG] Topology file: {topology_file}, Update interval: {update_interval}s")
+        
+        # Load topology
+        print("[DEBUG] Loading topology...")
         self.load_topology()
-        self.start_listening()
-        self.start_periodic_updates()
-        self.connect_neighbors()
+        
+        # Ensure topology loaded successfully
+        if self.my_id is None or self.my_node is None:
+            print("[ERROR] Failed to identify self in the topology. Check the topology file.")
+            raise ValueError("Self not identified in topology.")
+        
+        # Start health monitoring before listening or connecting
+        print("[DEBUG] Starting health monitor...")
         self.start_health_monitor()
-        print("Initialization complete.\n")
+
+        # Start listening for incoming connections
+        print("[DEBUG] Starting server listening...")
+        self.start_listening()
+
+        # Start periodic updates
+        print("[DEBUG] Starting periodic updates...")
+        self.start_periodic_updates()
+
+        # Connect to neighbors
+        print("[DEBUG] Connecting to neighbors...")
+        self.connect_neighbors()
+
+        print("[DEBUG] Router initialization complete.")
+        print("[DEBUG] Exiting Router.__init__")
 
     def start_health_monitor(self):
         """Starts a thread to monitor the health of neighbors."""
+        print("[DEBUG] Entering start_health_monitor")
         def health_check():
             while self.running:
-                for neighbor_id in list(self.routing_table.keys()):  # Iterate over all nodes
+                # Iterate over all known neighbors
+                print("[DEBUG] Starting health check for neighbors...")
+                for neighbor_id in list(self.routing_table.keys()):  # Includes all nodes in routing table
                     neighbor = self.get_node_by_id(neighbor_id)
-                    if neighbor:
+                    if neighbor and neighbor_id != self.my_id:  # Skip self
+                        print(f"[DEBUG] Checking health for Neighbor ID: {neighbor_id}, IP: {neighbor.ip}, Port: {neighbor.port}")
                         try:
                             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                                s.settimeout(2)  # Set a small timeout for health checks
+                                s.settimeout(2)  # Timeout for health check
                                 s.connect((neighbor.ip, neighbor.port))
                                 s.sendall(b"PING")
-                                if neighbor_id in self.next_hop and self.routing_table[neighbor_id] == float('inf'):
-                                    print(f"Neighbor {neighbor_id} is back online. Marking as active.")
+                                if self.routing_table[neighbor_id] == float('inf'):  # Reactivate if marked offline
+                                    print(f"[DEBUG] Neighbor {neighbor_id} is back online. Marking as active.")
                                     self.mark_as_reactivated(neighbor_id)
                                 else:
-                                    print(f"Neighbor {neighbor_id} is alive.")
+                                    print(f"[DEBUG] Neighbor {neighbor_id} is alive.")
                         except Exception as e:
-                            if neighbor_id in self.neighbors:  # Only mark as crashed if it was previously active
-                                print(f"Neighbor {neighbor_id} is not responding. Marking as crashed.")
-                                self.mark_as_crashed(neighbor_id)
+                            print(f"[DEBUG] Neighbor {neighbor_id} is not responding. Marking as crashed. Exception: {e}")
+                            self.mark_as_crashed(neighbor_id)
+                # Recalculate routes and propagate update
+                self.recalculate_routes()
+                self.step()
                 time.sleep(5)  # Run health checks every 5 seconds
-
         threading.Thread(target=health_check, daemon=True).start()
+        print("[DEBUG] Exiting start_health_monitor")
 
     def mark_as_crashed(self, neighbor_id):
         """Mark a neighbor as crashed and update routing table."""
+        print(f"[DEBUG] Entering mark_as_crashed for neighbor {neighbor_id}")
         with self.lock:
-            if neighbor_id in self.neighbors:
-                print(f"Marking neighbor {neighbor_id} as crashed.")
-                self.routing_table[neighbor_id] = float('inf')  # Mark the edge as infinity
+            if neighbor_id in self.routing_table:
+                # Mark neighbor as unreachable
+                print(f"[DEBUG] Marking Neighbor ID {neighbor_id} as crashed...")
+                self.routing_table[neighbor_id] = float('inf')
                 self.next_hop[neighbor_id] = None
-                self.neighbors.remove(neighbor_id)  # Remove the crashed neighbor from active neighbors
+                self.neighbors.discard(neighbor_id)  # Remove from neighbors if present
 
-            # Recalculate all routes to exclude the crashed node
-            for dest_id, next_hop in list(self.next_hop.items()):
-                if next_hop == neighbor_id:  # If the next hop for a destination was the crashed node
-                    self.routing_table[dest_id] = float('inf')  # Set cost to infinity
-                    self.next_hop[dest_id] = None  # Remove the next hop
-            self.recalculate_routes()  # Recalculate routes to find alternative paths
-            self.step()  # Inform other neighbors about the crash
+                # Invalidate routes going through the crashed neighbor
+                for dest_id, next_hop in list(self.next_hop.items()):
+                    if next_hop == neighbor_id:  # If next hop is the crashed node
+                        print(f"[DEBUG] Invalidating route to Destination ID {dest_id} via Neighbor {neighbor_id}.")
+                        self.routing_table[dest_id] = float('inf')  # Invalidate the route
+                        self.next_hop[dest_id] = None
+            else:
+                print(f"[DEBUG] Neighbor {neighbor_id} was not found in the routing table.")
+        print(f"[DEBUG] Exiting mark_as_crashed for neighbor {neighbor_id}")
 
     def mark_as_reactivated(self, neighbor_id):
-        """Mark a previously crashed neighbor as reactivated and update routing table."""
+        print(f"[DEBUG] Entering mark_as_reactivated for neighbor {neighbor_id}")
         with self.lock:
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
-                print(f"Reactivating neighbor {neighbor_id}.")
                 self.routing_table[neighbor_id] = self.get_initial_cost_to_neighbor(neighbor_id)
                 self.next_hop[neighbor_id] = neighbor_id
-                self.neighbors.add(neighbor_id)  # Add back to active neighbors
-                self.recalculate_routes()  # Recalculate routes based on updated topology
-                self.step()  # Inform other neighbors about the reactivation
+                self.neighbors.add(neighbor_id)
+                self.recalculate_routes()
+                self.step()
+        print(f"[DEBUG] Exiting mark_as_reactivated for neighbor {neighbor_id}")
 
     def get_initial_cost_to_neighbor(self, neighbor_id):
-        """Retrieve the initial cost to a neighbor from the topology."""
+        print(f"[DEBUG] Entering get_initial_cost_to_neighbor for neighbor {neighbor_id}")
         for neighbor in self.nodes:
             if neighbor.id == neighbor_id:
                 return self.routing_table.get(neighbor_id, float('inf'))
+        print(f"[DEBUG] Exiting get_initial_cost_to_neighbor for neighbor {neighbor_id}")
         return float('inf')
 
     def recalculate_routes(self):
-        """Recalculate routing table using Bellman-Ford logic."""
+        print("[DEBUG] Entering recalculate_routes")
         updated = False
         with self.lock:
-            print("Recalculating routes using Bellman-Ford logic...")
-
             for dest_id in self.routing_table.keys():
                 if dest_id == self.my_id:
-                    continue  # Skip self
-
+                    continue
                 best_cost = float('inf')
                 best_next_hop = None
-
-                # Evaluate routes through all active neighbors
                 for neighbor_id in self.neighbors:
                     cost_to_neighbor = self.routing_table.get(neighbor_id, float('inf'))
                     neighbor_cost_to_dest = self.get_neighbor_cost_to_dest(neighbor_id, dest_id)
-
-                    # Skip if neighbor is unreachable or the destination is not reachable through it
                     if cost_to_neighbor == float('inf') or neighbor_cost_to_dest == float('inf'):
                         continue
-
                     total_cost = cost_to_neighbor + neighbor_cost_to_dest
-
-                    # Update if this route is better
                     if total_cost < best_cost:
                         best_cost = total_cost
                         best_next_hop = neighbor_id
-
-                # Apply updates to the routing table if necessary
                 if best_cost != self.routing_table[dest_id] or best_next_hop != self.next_hop.get(dest_id):
-                    print(f"Updated route to {dest_id}: cost {self.routing_table[dest_id]} -> {best_cost}, next hop: {best_next_hop}")
                     self.routing_table[dest_id] = best_cost
                     self.next_hop[dest_id] = best_next_hop
                     updated = True
-
             if updated:
-                print("Routing table updated after recalculation.")
+                print("[DEBUG] Routing table updated after recalculation.")
                 self.display_routing_table()
             else:
-                print("No changes in routing table after recalculation.")
+                print("[DEBUG] No changes in routing table after recalculation.")
+        print("[DEBUG] Exiting recalculate_routes")
 
     def get_neighbor_cost_to_dest(self, neighbor_id, dest_id):
-        """Retrieve the cost from a neighbor to a destination."""
+        print(f"[DEBUG] Entering get_neighbor_cost_to_dest for neighbor {neighbor_id} and destination {dest_id}")
         if neighbor_id not in self.neighbors:
-            return float('inf')  # If the neighbor is not active, return infinity
-
-        # Simulate getting the cost from the neighbor's routing table
-        # In a real implementation, you would access the neighbor's last received routing table
+            return float('inf')
         return self.routing_table.get(dest_id, float('inf'))
 
     def get_my_ip(self):
-        """Get the machine's local IP address."""
+        print("[DEBUG] Entering get_my_ip")
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("8.8.8.8", 80))
                 local_ip = s.getsockname()[0]
-            print(f"Local IP address determined: {local_ip}")
+            print("[DEBUG] Exiting get_my_ip")
             return local_ip
         except Exception as e:
-            print(f"Error determining local IP address: {e}")
-            return "127.0.0.1"  # Fallback to localhost if detection fails
+            print(f"[DEBUG] Error determining local IP address: {e}")
+            return "127.0.0.1"
 
     def load_topology(self):
-        """Reads the topology file and initializes routing tables."""
-        print(f"Loading topology from file: {self.topology_file}")
+        print("[DEBUG] Entering load_topology")
         try:
             with open(self.topology_file, 'r') as f:
                 lines = f.read().strip().split('\n')
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
-
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
-                self.nodes.append(node)  # Populate nodes list
+                self.nodes.append(node)
                 if parts[1] == self.my_ip:
                     self.my_id = node.id
                     self.my_node = node
@@ -188,8 +208,6 @@ class Router:
                 else:
                     self.routing_table[node.id] = float('inf')
                     self.next_hop[node.id] = None
-                print(f"Loaded server {node.id}: IP={node.ip}, Port={node.port}")
-
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
@@ -201,15 +219,9 @@ class Router:
                     self.neighbors.add(from_id)
                     self.routing_table[from_id] = cost
                     self.next_hop[from_id] = from_id
-                print(f"Link loaded: {from_id} <-> {to_id} with cost {cost}")
-
-            print("Nodes list after topology load:")
-            for node in self.nodes:
-                print(f"Node ID: {node.id}, IP: {node.ip}, Port: {node.port}")
-
-            print("Topology loaded successfully.\n")
         except Exception as e:
-            print(f"Error loading topology: {e}")
+            print(f"[DEBUG] Error loading topology: {e}")
+        print("[DEBUG] Exiting load_topology")
 
     def start_listening(self):
         """Start a server socket to listen for incoming connections."""
@@ -249,7 +261,7 @@ class Router:
     def connect_neighbors(self):
         """Attempts to connect to all neighbors."""
         print("Attempting to connect to neighbors...")
-        for neighbor_id in self.neighbors:
+        for neighbor_id in list(self.neighbors):  # Iterate over active neighbors
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
                 try:
@@ -257,10 +269,9 @@ class Router:
                         s.settimeout(5)
                         s.connect((neighbor.ip, neighbor.port))
                         print(f"Successfully connected to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
-                except Exception as e:
-                    print(f"Failed to connect to neighbor {neighbor_id} at {neighbor.ip}:{neighbor.port}: {e}")
-            else:
-                print(f"Neighbor {neighbor_id} not found in topology.")
+                except Exception:
+                    print(f"Failed to connect to neighbor {neighbor_id} at {neighbor.ip}:{neighbor.port}")
+                    self.mark_as_crashed(neighbor_id)  # Mark the neighbor as crashed if unreachable
 
     def start_periodic_updates(self):
         """Starts a thread to periodically send updates to neighbors."""
