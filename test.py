@@ -19,26 +19,24 @@ class Node:
 
 class Router:
     """Distance Vector Routing Protocol Router."""
-    def __init__(self, topology_file, update_interval, port):
+    def __init__(self, topology_file, update_interval):
         self.my_ip = self.get_my_ip()
         self.my_id = None
         self.my_node = None
-        self.nodes = []  # Initialize nodes list
+        self.nodes = []
         self.topology_file = topology_file
         self.update_interval = update_interval
-        self.routing_table = defaultdict(dict)  # Nested dictionary for complete routing info
+        self.routing_table = defaultdict(dict)
         self.neighbors = set()
         self.running = True
         self.lock = threading.Lock()
-        self.server_port = port
-        self.connections = {}  # {connection_id: (socket, (ip, port))}
-        self.connection_id_counter = 1
-        self.available_ids = []
+        self.connections = {}
 
-        print(f"Initializing router with topology file: {topology_file}, update interval: {update_interval}s, port: {port}.")
+        print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
         threading.Thread(target=self.listen_for_connections).start()
         threading.Thread(target=self.start_periodic_updates).start()
+        print("Initialization complete.\n")
 
     def get_my_ip(self):
         """Retrieve the machine's local IP address."""
@@ -61,11 +59,11 @@ class Router:
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
                 self.nodes.append(node)
-                if parts[1] == self.my_ip and int(parts[2]) == self.server_port:
+                if parts[1] == self.my_ip:
                     self.my_id = node.id
                     self.my_node = node
-                    self.routing_table[node.id][node.id] = 0  # Cost to self is 0
-            for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
+                    self.routing_table[node.id][node.id] = 0
+            for i in range(2 + num_servers, 2 + num_neighbors + num_servers):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
                 if from_id == self.my_id or to_id == self.my_id:
@@ -78,9 +76,9 @@ class Router:
     def listen_for_connections(self):
         """Start a server socket to accept incoming connections."""
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind((self.my_ip, self.server_port))
+        server_socket.bind((self.my_ip, self.my_node.port))
         server_socket.listen(5)
-        print(f"Listening on {self.my_ip}:{self.server_port}")
+        print(f"Listening on {self.my_ip}:{self.my_node.port}")
         while self.running:
             client_socket, client_address = server_socket.accept()
             threading.Thread(target=self.handle_connection, args=(client_socket, client_address)).start()
@@ -122,7 +120,6 @@ class Router:
     def recalculate_routes(self):
         """Recalculate the best routes."""
         print("[DEBUG] Recalculating routes...")
-        # Logic for recomputing the routing table
         self.display_routing_table()
 
     def display_routing_table(self):
@@ -151,6 +148,17 @@ class Router:
             except Exception as e:
                 print(f"Error sending updates to neighbor {neighbor_id}: {e}")
 
+    def update(self, server1_id, server2_id, new_cost):
+        """Update link cost."""
+        with self.lock:
+            if server1_id == self.my_id or server2_id == self.my_id:
+                target_id = server2_id if server1_id == self.my_id else server1_id
+                if target_id in self.neighbors:
+                    self.routing_table[self.my_id][target_id] = new_cost
+                    self.recalculate_routes()
+                else:
+                    print("Can only update direct neighbors.")
+
     def run(self):
         """Run the router command interface."""
         while True:
@@ -171,22 +179,20 @@ class Router:
                 self.running = False
                 break
 
-    def update(self, server1_id, server2_id, new_cost):
-        """Update link cost."""
-        with self.lock:
-            if server1_id == self.my_id or server2_id == self.my_id:
-                target_id = server2_id if server1_id == self.my_id else server1_id
-                if target_id in self.neighbors:
-                    self.routing_table[self.my_id][target_id] = new_cost
-                    self.recalculate_routes()
-                else:
-                    print("Can only update direct neighbors.")
-
 if __name__ == "__main__":
     print("********* Distance Vector Routing Protocol **********")
     print("Use: server -t <topology-file-name> -i <routing-update-interval>")
-    topology_file = input("Enter topology file: ")
-    update_interval = int(input("Enter update interval (seconds): "))
-    port = int(input("Enter port: "))
-    router = Router(topology_file, update_interval, port)
-    router.run()
+    command = input("Enter server command: ").strip().split()
+    if len(command) == 5 and command[0] == "server" and command[1] == "-t" and command[3] == "-i":
+        topology_file = command[2]
+        try:
+            update_interval = int(command[4])
+            if update_interval >= 5:
+                router = Router(topology_file, update_interval)
+                router.run()
+            else:
+                print("Routing update interval must be at least 5 seconds.")
+        except ValueError:
+            print("Invalid routing update interval. Please enter a valid integer.")
+    else:
+        print("Invalid command. Use the format: server -t <topology-file-name> -i <routing-update-interval>")
