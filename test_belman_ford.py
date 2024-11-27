@@ -438,6 +438,7 @@ class Router:
             print(f"[DEBUG] Current topology: {dict(self.topology)}")
 
             # Reset routing table
+            print(f"[DEBUG] Initializing routing table...")
             for node in self.nodes:
                 if node.id == self.my_id:
                     self.routing_table[node.id] = 0  # Cost to self is 0
@@ -448,22 +449,30 @@ class Router:
                 else:
                     self.routing_table[node.id] = float('inf')  # All others are unreachable
                     self.next_hop[node.id] = None
+            # Debug: Display the initialized routing table
+            self.display_routing_table()
 
-            # Bellman-Ford algorithm
-            print("[DEBUG] Starting Bellman-Ford iterations...")
-            for iteration in range(len(self.nodes) - 1):  # Repeat |V|-1 times
-                updated = False
+            # Start Bellman-Ford iterations
+            print("[DEBUG] Starting Bellman-Ford iteration...")
+            for _ in range(len(self.nodes) - 1):  # Perform |V| - 1 iterations
+                updated = False  # Track if any updates are made in this iteration
                 for from_id, neighbors in self.topology.items():
                     for to_id, cost in neighbors.items():
                         if self.routing_table[from_id] + cost < self.routing_table[to_id]:
-                            print(f"[DEBUG] Iteration {iteration}: Updating route to {to_id} "
-                                f"via {from_id}: cost {self.routing_table[to_id]} -> {self.routing_table[from_id] + cost}")
+                            old_cost = self.routing_table[to_id]
                             self.routing_table[to_id] = self.routing_table[from_id] + cost
                             self.next_hop[to_id] = self.next_hop[from_id]
                             updated = True
+                            # Debug: Log updates for the current iteration
+                            print(f"[DEBUG] Updated route: Destination={to_id}, Cost={old_cost} -> {self.routing_table[to_id]}, Next Hop={self.next_hop[to_id]}")
                 if not updated:
-                    print(f"[DEBUG] Iteration {iteration}: No further updates.")
-                    break  # Early exit if no updates in this iteration
+                    # Debug: Log that no updates were made, so the algorithm terminates early
+                    print("[DEBUG] No updates in this iteration, stopping early.")
+                    break
+
+            # Debug: Final routing table after Bellman-Ford
+            print("[INFO] Final routing table after Bellman-Ford:")
+            self.display_routing_table()
 
         print("[INFO] Routing table recomputed.")
         self.display_routing_table()
