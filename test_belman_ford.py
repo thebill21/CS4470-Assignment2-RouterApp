@@ -382,17 +382,89 @@ class Router:
     #     # Trigger routing table propagation
     #     self.step()
 
+    # def update(self, server1_id, server2_id, new_cost):
+    #     """Update a link cost bi-directionally and broadcast to the entire network."""
+    #     print(f"[INFO] Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
+
+    #     # Step 1: Update the local in-memory topology for both directions
+    #     with self.lock:
+    #         self.topology[server1_id][server2_id] = new_cost
+    #         self.topology[server2_id][server1_id] = new_cost
+    #         print(f"[DEBUG] Updated local in-memory topology: {dict(self.topology)}")
+
+    #     # Step 2: If this router is directly involved, update its local neighbor view
+    #     if server1_id == self.my_id or server2_id == self.my_id:
+    #         neighbor_id = server2_id if server1_id == self.my_id else server1_id
+    #         with self.lock:
+    #             self.neighbors[neighbor_id] = new_cost
+    #             self.routing_table[neighbor_id] = new_cost
+    #             self.next_hop[neighbor_id] = neighbor_id
+    #             print(f"[DEBUG] Updated local neighbor cost: {dict(self.neighbors)}")
+    #     else:
+    #         print(f"[INFO] This router is not directly connected to edge {server1_id} <-> {server2_id}.")
+
+    #     # Step 3: Broadcast the edge update to all neighbors
+    #     update_message = {
+    #         "command": "update_topology",
+    #         "server1_id": server1_id,
+    #         "server2_id": server2_id,
+    #         "new_cost": new_cost,
+    #         "origin_id": self.my_id  # Include origin to prevent rebroadcasting loops
+    #     }
+    #     for neighbor_id in self.neighbors:
+    #         neighbor = self.get_node_by_id(neighbor_id)
+    #         if neighbor:
+    #             print(f"[DEBUG] Broadcasting edge update to neighbor {neighbor.id}.")
+    #             self.send_message(neighbor, update_message)
+
+    #     # Step 4: Recompute the routing table after applying the update
+    #     print("[INFO] Recomputing routing table after local topology update.")
+    #     self.recompute_routing_table()
+
     def update(self, server1_id, server2_id, new_cost):
         """Update a link cost bi-directionally and broadcast to the entire network."""
         print(f"[INFO] Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
 
-        # Step 1: Update the local in-memory topology for both directions
+        # Treat 'inf' as disabling the link
+        if new_cost == float('inf'):
+            print(f"[INFO] Setting cost to 'inf' effectively disables the link {server1_id} <-> {server2_id}.")
+            with self.lock:
+                self.topology[server1_id][server2_id] = new_cost
+                self.topology[server2_id][server1_id] = new_cost
+                self.disabled_links.add((server1_id, server2_id))
+                self.disabled_links.add((server2_id, server1_id))
+
+                # If the current router is involved, update its neighbors
+                if server1_id == self.my_id or server2_id == self.my_id:
+                    neighbor_id = server2_id if server1_id == self.my_id else server1_id
+                    if neighbor_id in self.neighbors:
+                        print(f"[INFO] Removing {neighbor_id} from neighbors.")
+                        del self.neighbors[neighbor_id]
+
+            # Broadcast the disable command to all other neighbors
+            disable_message = {
+                "command": "disable_link",
+                "server1_id": server1_id,
+                "server2_id": server2_id,
+                "origin_id": self.my_id,
+            }
+            for neighbor_id in self.neighbors:
+                neighbor = self.get_node_by_id(neighbor_id)
+                if neighbor:
+                    print(f"[DEBUG] Broadcasting disable to neighbor {neighbor.id}.")
+                    self.send_message(neighbor, disable_message)
+
+            # Recompute the routing table after disabling the link
+            print("[INFO] Recomputing routing table after disabling the link.")
+            self.recompute_routing_table()
+            return
+
+        # Handle regular cost updates
         with self.lock:
             self.topology[server1_id][server2_id] = new_cost
             self.topology[server2_id][server1_id] = new_cost
             print(f"[DEBUG] Updated local in-memory topology: {dict(self.topology)}")
 
-        # Step 2: If this router is directly involved, update its local neighbor view
         if server1_id == self.my_id or server2_id == self.my_id:
             neighbor_id = server2_id if server1_id == self.my_id else server1_id
             with self.lock:
@@ -403,7 +475,7 @@ class Router:
         else:
             print(f"[INFO] This router is not directly connected to edge {server1_id} <-> {server2_id}.")
 
-        # Step 3: Broadcast the edge update to all neighbors
+        # Broadcast the edge update to all neighbors
         update_message = {
             "command": "update_topology",
             "server1_id": server1_id,
@@ -417,7 +489,7 @@ class Router:
                 print(f"[DEBUG] Broadcasting edge update to neighbor {neighbor.id}.")
                 self.send_message(neighbor, update_message)
 
-        # Step 4: Recompute the routing table after applying the update
+        # Recompute the routing table after applying the update
         print("[INFO] Recomputing routing table after local topology update.")
         self.recompute_routing_table()
 
