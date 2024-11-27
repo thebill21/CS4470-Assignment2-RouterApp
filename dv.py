@@ -1,3 +1,7 @@
+# Team 28: 
+# Tuan Khai Tran, CIN: 402795338
+# Jiahao Li, CIN: <Jiahao will add his CIN at his version of submission>
+
 import socket
 import threading
 import time
