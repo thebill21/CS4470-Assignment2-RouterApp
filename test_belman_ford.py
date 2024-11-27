@@ -555,45 +555,41 @@ class Router:
     def run(self):
         """Process commands."""
         while self.running:
+            # Accept user command as input
             command = input("Enter command: ").strip().split()
             if not command:
                 continue
 
-            # Command parsing
+            # Parse the command and its arguments
             cmd = command[0].lower()
-            if cmd == "display":
-                print("[COMMAND] Displaying routing table.")
-                self.display_routing_table()
-            elif cmd == "update" and len(command) == 4:
-                try:
-                    server1_id = int(command[1])  # Validate that server1_id is an integer
-                    server2_id = int(command[2])  # Validate that server2_id is an integer
-                    if command[3].lower() == "inf":  # Check for 'inf' as a valid cost
-                        new_cost = float('inf')
-                    else:
-                        new_cost = float(command[3])  # Validate that new_cost is a float
-                    print(f"[COMMAND] Updating edge {server1_id} <-> {server2_id} with cost {new_cost}.")
-                    self.update(server1_id, server2_id, new_cost)
-                except ValueError as e:
-                    print(f"[ERROR] Invalid input. Use: update <server1_id> <server2_id> <new_cost>. Error: {e}")
-            elif cmd == "step":
-                print("[COMMAND] Manually triggering routing updates.")
-                self.step()
-            elif cmd == "packets":
-                print(f"[COMMAND] Total packets received: {self.number_of_packets_received}")
-            elif cmd == "disable" and len(command) == 2:
-                try:
-                    server_id = int(command[1])
-                    print(f"[COMMAND] Disabling link to Server {server_id}.")
-                    self.disable(server_id)
-                except ValueError:
-                    print("[ERROR] Invalid input. Use: disable <server_id>")
-            elif cmd == "crash":
-                print("[COMMAND] Crashing the server.")
-                self.crash()
-                break
-            else:
-                print("[ERROR] Unknown command. Available commands: display, update, step, packets, disable, crash.")
+            try:
+                if cmd == "display":
+                    self.display_routing_table()  # Show the routing table
+                    print("display SUCCESS")  # Success response for the display command
+                elif cmd == "update" and len(command) == 4:
+                    server1_id = int(command[1])  # Parse server1 ID
+                    server2_id = int(command[2])  # Parse server2 ID
+                    new_cost = float('inf') if command[3].lower() == "inf" else float(command[3])  # Parse cost
+                    self.update(server1_id, server2_id, new_cost)  # Execute the update command
+                elif cmd == "step":
+                    self.step()  # Send routing updates
+                    print("step SUCCESS")  # Success response for the step command
+                elif cmd == "packets":
+                    # Show the total packets received
+                    print(f"packets SUCCESS\nTotal packets received: {self.number_of_packets_received}")
+                elif cmd == "disable" and len(command) == 2:
+                    server_id = int(command[1])  # Parse the server ID to disable
+                    self.disable(server_id)  # Execute the disable command
+                elif cmd == "crash":
+                    print("crash SUCCESS")  # Notify that crash was initiated
+                    self.crash()  # Crash the server
+                    break
+                else:
+                    # Handle unknown commands
+                    print("[ERROR] Unknown command. Available commands: display, update, step, packets, disable, crash.")
+            except ValueError as e:
+                # Handle invalid input errors
+                print(f"{cmd} ERROR: Invalid input. {str(e)}")
 
 if __name__ == "__main__":
     print("********* Distance Vector Routing Protocol **********")
