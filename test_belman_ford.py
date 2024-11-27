@@ -142,7 +142,9 @@ class Router:
         with self.lock:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
-                if cost < float('inf') and dest_id != self.my_id:
+                if dest_id == self.my_id:
+                    self.next_hop[dest_id] = self.my_id
+                elif cost < float('inf') and dest_id != self.my_id:
                     # Trace back the path to find the direct next hop
                     next_hop = dest_id
                     while predecessors[next_hop] != self.my_id:
@@ -165,6 +167,12 @@ class Router:
                     if distances[u] + graph[u][v] < distances[v]:
                         distances[v] = distances[u] + graph[u][v]
                         predecessors[v] = u
+
+        # Detect negative weight cycles (not expected in this scenario)
+        for u in graph:
+            for v in graph[u]:
+                if distances[u] + graph[u][v] < distances[v]:
+                    print(f"Warning: Negative weight cycle detected involving edge {u}-{v}")
 
         return distances, predecessors
 
