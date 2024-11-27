@@ -246,20 +246,10 @@ class Router:
                 # Mark the update as processed
                 self.processed_updates.add(update_key)
 
-                # Update local topology
-                with self.lock:
-                    self.topology[server1_id][server2_id] = new_cost
-                    self.topology[server2_id][server1_id] = new_cost
-                    print(f"[DEBUG] Updated local topology: {dict(self.topology)}")
+                # Perform the same update command locally
+                print(f"[INFO] Performing local update: update {server2_id} <-> {server1_id} with cost {new_cost}")
+                self.update(server2_id, server1_id, new_cost)
 
-                # Forward the update to other neighbors if it's not the originating router
-                if origin_id != self.my_id:
-                    print(f"[INFO] Forwarding topology update for edge {server1_id} <-> {server2_id} to neighbors.")
-                    self.broadcast_topology_update(server1_id, server2_id, new_cost, origin_id)
-
-                # Recompute routing table with the updated topology
-                print("[INFO] Recomputing routing table after topology update.")
-                self.recompute_routing_table()  # Debugging inside recompute_routing_table will show the updates
                 return
 
         # Handle routing table updates
@@ -284,7 +274,7 @@ class Router:
                     # Update if the new route is better
                     if new_cost < self.routing_table.get(dest_id, float('inf')):
                         print(f"[DEBUG] Updating route to {dest_id}: "
-                            f"cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
+                            f"cost {self.routing_table.get(dest_id)} -> {new_cost}, Next Hop={sender_id}")
                         self.routing_table[dest_id] = new_cost
                         self.next_hop[dest_id] = sender_id
                         updated = True
