@@ -259,7 +259,7 @@ class Router:
 
                 # Recompute routing table with the updated topology
                 print("[INFO] Recomputing routing table after topology update.")
-                self.recompute_routing_table()
+                self.recompute_routing_table()  # Debugging inside recompute_routing_table will show the updates
                 return
 
         # Handle routing table updates
