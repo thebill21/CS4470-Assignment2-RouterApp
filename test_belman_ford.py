@@ -138,24 +138,32 @@ class Router:
     def recalculate_routes(self):
         """Recalculate the best routes using Bellman-Ford."""
         print("[DEBUG] Recalculating routes...")
-        distances, predecessors = self.bellman_ford(self.my_id)
+        distances, predecessors = self.bellman_ford(self.global_graph, self.my_id)
         with self.lock:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
-                self.next_hop[dest_id] = predecessors[dest_id] if dest_id in predecessors else None
+                if cost < float('inf') and dest_id != self.my_id:
+                    # Trace back the path to find the direct next hop
+                    next_hop = dest_id
+                    while predecessors[next_hop] != self.my_id:
+                        next_hop = predecessors[next_hop]
+                    self.next_hop[dest_id] = next_hop
+                else:
+                    self.next_hop[dest_id] = None
         self.display_routing_table()
 
-    def bellman_ford(self, source):
+    def bellman_ford(self, graph, source):
         """Bellman-Ford algorithm to compute shortest paths."""
-        distances = {node.id: float('inf') for node in self.nodes}
-        predecessors = {}
+        distances = {node: float('inf') for node in graph}
+        predecessors = {node: None for node in graph}  # Track predecessors for each node
         distances[source] = 0
 
-        for _ in range(len(self.nodes) - 1):
-            for u, neighbors in self.global_graph.items():
-                for v, cost in neighbors.items():
-                    if distances[u] + cost < distances[v]:
-                        distances[v] = distances[u] + cost
+        # Relax edges repeatedly
+        for _ in range(len(graph) - 1):
+            for u in graph:
+                for v in graph[u]:
+                    if distances[u] + graph[u][v] < distances[v]:
+                        distances[v] = distances[u] + graph[u][v]
                         predecessors[v] = u
 
         return distances, predecessors
@@ -178,55 +186,16 @@ class Router:
                     print(f"Error sending updates to neighbor {neighbor_id}: {e}")
 
     def update(self, server1_id, server2_id, new_cost):
-        """Update the cost of a link between two servers."""
+        """Update the cost of a link between two servers and propagate the change."""
         with self.lock:
             if server1_id in self.global_graph and server2_id in self.global_graph[server1_id]:
-                # Update bi-directionally
                 self.global_graph[server1_id][server2_id] = new_cost
                 self.global_graph[server2_id][server1_id] = new_cost
                 print(f"Updated link cost between {server1_id} and {server2_id} to {new_cost}.")
-
-                # Propagate changes to both nodes
-                self.recalculate_routes()  # For this router
-
-                # Send update to the other involved node
-                if server1_id == self.my_id:
-                    self.send_update_to_neighbor(server2_id)
-                elif server2_id == self.my_id:
-                    self.send_update_to_neighbor(server1_id)
+                self.recalculate_routes()  # Update local routing table
+                self.step()  # Notify neighbors of the update
             else:
                 print(f"Error: Link between {server1_id} and {server2_id} does not exist.")
-
-    def send_update_to_neighbor(self, neighbor_id):
-        """Send the updated routing table to a specific neighbor."""
-        neighbor = self.get_node_by_id(neighbor_id)
-        if neighbor:
-            message = {
-                "id": self.my_id,
-                "routing_table": self.routing_table
-            }
-            self.send_message(neighbor, message)
-
-    def get_node_by_id(self, node_id):
-        """Fetches a node by its ID."""
-        for node in self.nodes:
-            if node.id == node_id:
-                return node
-        print(f"Node {node_id} not found.")
-        return None
-
-    def send_message(self, neighbor, message):
-        """Sends a message to a neighbor."""
-        print(f"Sending message to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((neighbor.ip, neighbor.port))
-                formatted_message = json.dumps(message)
-                print(f"Sending formatted JSON message: {formatted_message}")
-                s.sendall(formatted_message.encode())
-                print(f"Message sent successfully to {neighbor.id}.")
-        except Exception as e:
-            print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
 
     def display_routing_table(self):
         """Display the routing table."""
