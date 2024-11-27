@@ -235,42 +235,41 @@ class Router:
                 new_cost = float(message["new_cost"])
                 origin_id = message.get("origin_id", None)  # Originating router of the update
 
-                # Unique identifier for this update
-                update_id = (server1_id, server2_id, new_cost)
+                print(f"[INFO] Received topology update command: {server1_id} <-> {server2_id} with cost {new_cost}.")
 
-                # Skip if this update has already been processed
-                if update_id in self.processed_updates:
-                    print(f"[INFO] Already processed update {update_id}. Skipping.")
+                # Check if this update has already been processed
+                update_key = (server1_id, server2_id, new_cost)
+                if update_key in self.processed_updates:
+                    print(f"[INFO] Already processed update {update_key}. Skipping.")
                     return
 
-                print(f"Received topology update command: {server1_id} <-> {server2_id} with cost {new_cost}.")
-                
                 # Mark the update as processed
-                self.processed_updates.add(update_id)
+                self.processed_updates.add(update_key)
 
                 # Update local topology
                 with self.lock:
                     self.topology[server1_id][server2_id] = new_cost
                     self.topology[server2_id][server1_id] = new_cost
+                    print(f"[DEBUG] Updated local topology: {dict(self.topology)}")
 
                 # Forward the update to other neighbors if it's not the originating router
                 if origin_id != self.my_id:
-                    print(f"Forwarding topology update for edge {server1_id} <-> {server2_id} to neighbors.")
+                    print(f"[INFO] Forwarding topology update for edge {server1_id} <-> {server2_id} to neighbors.")
                     self.broadcast_topology_update(server1_id, server2_id, new_cost, origin_id)
 
                 # Recompute routing table with the updated topology
-                print("Recomputing routing table after topology update.")
+                print("[INFO] Recomputing routing table after topology update.")
                 self.recompute_routing_table()
                 return
 
-        # Handle messages containing routing table updates
+        # Handle routing table updates
         if "id" in message and "routing_table" in message:
             sender_id = int(message["id"])  # Sender's ID
             received_table = {
                 int(k): float(v) for k, v in message["routing_table"].items()
             }  # Convert table keys/values to integers/floats
 
-            print(f"Received routing update from Router {sender_id}: {received_table}")
+            print(f"[INFO] Received routing update from Router {sender_id}: {received_table}")
 
             updated = False
             with self.lock:
@@ -284,20 +283,20 @@ class Router:
 
                     # Update if the new route is better
                     if new_cost < self.routing_table.get(dest_id, float('inf')):
-                        print(f"Updating route to {dest_id}: "
+                        print(f"[DEBUG] Updating route to {dest_id}: "
                             f"cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
                         self.routing_table[dest_id] = new_cost
                         self.next_hop[dest_id] = sender_id
                         updated = True
 
             if updated:
-                print("Routing table updated based on received routing update.")
+                print("[INFO] Routing table updated based on received routing update.")
                 self.display_routing_table()
                 self.step()  # Propagate updated routing table to neighbors
             return
 
         # Handle unrecognized or unsupported commands
-        print("Unknown or unsupported command received. Ignoring message.")
+        print("[ERROR] Unknown or unsupported command received. Ignoring message.")
 
     def broadcast_topology_update(self, server1_id, server2_id, new_cost, origin_id):
         """Broadcast topology update to all neighbors except the origin."""
@@ -376,13 +375,13 @@ class Router:
 
     def update(self, server1_id, server2_id, new_cost):
         """Update a link cost bi-directionally and broadcast to the entire network."""
-        print(f"Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
+        print(f"[INFO] Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
 
         # Step 1: Update the local in-memory topology for both directions
         with self.lock:
             self.topology[server1_id][server2_id] = new_cost
             self.topology[server2_id][server1_id] = new_cost
-            print(f"Updated local in-memory topology: edge {server1_id} <-> {server2_id} now has cost {new_cost}.")
+            print(f"[DEBUG] Updated local in-memory topology: {dict(self.topology)}")
 
         # Step 2: If this router is directly involved, update its local neighbor view
         if server1_id == self.my_id or server2_id == self.my_id:
@@ -391,9 +390,9 @@ class Router:
                 self.neighbors[neighbor_id] = new_cost
                 self.routing_table[neighbor_id] = new_cost
                 self.next_hop[neighbor_id] = neighbor_id
-                print(f"Updated local neighbor cost to {neighbor_id} to {new_cost}.")
+                print(f"[DEBUG] Updated local neighbor cost: {dict(self.neighbors)}")
         else:
-            print(f"This router is not directly connected to edge {server1_id} <-> {server2_id}.")
+            print(f"[INFO] This router is not directly connected to edge {server1_id} <-> {server2_id}.")
 
         # Step 3: Broadcast the edge update to all neighbors
         update_message = {
@@ -406,11 +405,11 @@ class Router:
         for neighbor_id in self.neighbors:
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
-                print(f"Broadcasting edge update to neighbor {neighbor.id}.")
+                print(f"[DEBUG] Broadcasting edge update to neighbor {neighbor.id}.")
                 self.send_message(neighbor, update_message)
 
         # Step 4: Recompute the routing table after applying the update
-        print("Recomputing routing table after local topology update.")
+        print("[INFO] Recomputing routing table after local topology update.")
         self.recompute_routing_table()
 
     def apply_update(self, server1_id, server2_id, new_cost):
