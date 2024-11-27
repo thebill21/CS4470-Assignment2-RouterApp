@@ -447,40 +447,44 @@ class Router:
             self.recompute_routing_table()
 
     def recompute_routing_table(self):
-        """Recompute the routing table using Bellman-Ford algorithm."""
+        """Recompute the routing table using the Bellman-Ford algorithm."""
         print("[INFO] Recomputing routing table...")
-        with self.lock:
-            print(f"[DEBUG] Current topology: {dict(self.topology)}")
-            print(f"[DEBUG] Disabled links: {self.disabled_links}")
 
-            # Reset routing table
+        with self.lock:
+            # Reset the routing table for all nodes
             for node in self.nodes:
                 if node.id == self.my_id:
-                    self.routing_table[node.id] = 0  # Cost to self is 0
+                    # Distance to self is always 0
+                    self.routing_table[node.id] = 0
                     self.next_hop[node.id] = self.my_id
                 else:
+                    # Initialize all other distances to infinity
                     self.routing_table[node.id] = float('inf')
                     self.next_hop[node.id] = None
 
-            # Start Bellman-Ford iterations
-            for _ in range(len(self.nodes) - 1):
-                updated = False
+            # Perform the Bellman-Ford iterations
+            for _ in range(len(self.nodes) - 1):  # At most (number of nodes - 1) iterations
                 for from_id, neighbors in self.topology.items():
                     for to_id, cost in neighbors.items():
-                        # Skip links that are disabled or involve the crashed server
-                        if cost == float('inf') or (from_id, to_id) in self.disabled_links:
+                        if cost == float('inf'):  # Skip disabled links
                             continue
 
-                        # Bellman-Ford update step
-                        if self.routing_table[from_id] + cost < self.routing_table[to_id]:
-                            self.routing_table[to_id] = self.routing_table[from_id] + cost
-                            self.next_hop[to_id] = self.next_hop[from_id]
-                            updated = True
+                        # Calculate the new cost to the destination via the neighbor
+                        new_cost = self.routing_table[from_id] + cost
 
-                if not updated:
-                    break
+                        # If the new cost is better, update the routing table
+                        if new_cost < self.routing_table[to_id]:
+                            self.routing_table[to_id] = new_cost
+                            self.next_hop[to_id] = (
+                                from_id if self.my_id == from_id else self.next_hop[from_id]
+                            )
 
-            # Debug: Display final routing table
+            # Ensure that unreachable nodes retain None as next_hop
+            for dest_id in self.routing_table:
+                if self.routing_table[dest_id] == float('inf'):
+                    self.next_hop[dest_id] = None
+
+            # Display the updated routing table for debugging
             self.display_routing_table()
 
     def display_routing_table(self):
