@@ -5,6 +5,8 @@
 #### Professor: Zilong Ye
 # CS4470-Assignment2-RouterApp
 
+# For full README, please download the file.
+
 ## Main file / program is named 'dv.py'
 this program contain only one file listed above, all other files are just for testing / building purposes.
 
