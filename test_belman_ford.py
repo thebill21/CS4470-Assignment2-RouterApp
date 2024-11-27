@@ -223,11 +223,11 @@ class Router:
     #         self.step()  # Trigger routing updates to neighbors
 
     def process_message(self, message):
-        """Process incoming messages, including topology updates and routing updates."""
+        """Process incoming messages, including routing updates and topology updates."""
         self.number_of_packets_received += 1  # Increment the packet count for statistics
 
+        # Handle topology update command
         if "command" in message:
-            # Handle topology update command
             if message["command"] == "update_topology":
                 server1_id = int(message["server1_id"])
                 server2_id = int(message["server2_id"])
@@ -251,41 +251,40 @@ class Router:
                 self.recompute_routing_table()
                 return
 
-            # Handle routing table updates from neighbors
-            if message["command"] == "routing_update":
-                sender_id = int(message["id"])  # Sender's ID
-                received_table = {
-                    int(k): float(v) for k, v in message.get("routing_table", {}).items()
-                }  # Convert table keys/values to integers/floats
+        # Handle messages containing routing table updates
+        if "id" in message and "routing_table" in message:
+            sender_id = int(message["id"])  # Sender's ID
+            received_table = {
+                int(k): float(v) for k, v in message["routing_table"].items()
+            }  # Convert table keys/values to integers/floats
 
-                print(f"Received routing update from Router {sender_id}: {received_table}")
+            print(f"Received routing update from Router {sender_id}: {received_table}")
 
-                # Apply received routing table
-                updated = False
-                with self.lock:
-                    for dest_id, received_cost in received_table.items():
-                        if dest_id == self.my_id:
-                            continue  # Skip routes to self
+            updated = False
+            with self.lock:
+                for dest_id, received_cost in received_table.items():
+                    if dest_id == self.my_id:
+                        continue  # Skip routes to self
 
-                        # Calculate new cost through the sender
-                        cost_to_sender = self.routing_table.get(sender_id, float('inf'))
-                        new_cost = cost_to_sender + received_cost
+                    # Calculate new cost through the sender
+                    cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+                    new_cost = cost_to_sender + received_cost
 
-                        # Update if the new route is better
-                        if new_cost < self.routing_table.get(dest_id, float('inf')):
-                            print(f"Updating route to {dest_id}: "
-                                f"cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
-                            self.routing_table[dest_id] = new_cost
-                            self.next_hop[dest_id] = sender_id
-                            updated = True
+                    # Update if the new route is better
+                    if new_cost < self.routing_table.get(dest_id, float('inf')):
+                        print(f"Updating route to {dest_id}: "
+                            f"cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
+                        self.routing_table[dest_id] = new_cost
+                        self.next_hop[dest_id] = sender_id
+                        updated = True
 
-                if updated:
-                    print("Routing table updated based on received routing update.")
-                    self.display_routing_table()
-                    self.step()  # Propagate updated routing table to neighbors
-                return
+            if updated:
+                print("Routing table updated based on received routing update.")
+                self.display_routing_table()
+                self.step()  # Propagate updated routing table to neighbors
+            return
 
-        # Handle other commands or invalid message
+        # Handle unrecognized or unsupported commands
         print("Unknown or unsupported command received. Ignoring message.")
 
     def broadcast_topology_update(self, server1_id, server2_id, new_cost, origin_id):
@@ -295,7 +294,7 @@ class Router:
             "server1_id": server1_id,
             "server2_id": server2_id,
             "new_cost": new_cost,
-            "origin_id": origin_id
+            "origin_id": origin_id or self.my_id  # Set origin_id if not provided
         }
         for neighbor_id in self.neighbors:
             neighbor = self.get_node_by_id(neighbor_id)
