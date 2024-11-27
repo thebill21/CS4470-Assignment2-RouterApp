@@ -104,61 +104,79 @@ class Router:
             self.step()
 
     def process_message(self, message):
-        """Process incoming routing table updates in binary format."""
-        try:
-            # Extract header
-            num_fields, sender_port = struct.unpack("!HH", message[:4])
-            sender_ip = socket.inet_ntoa(message[4:8])
+        """Process incoming routing table updates."""
+        print(f"Processing message: {message}")
+        sender_id = message['id']
+        received_table = message['routing_table']
 
-            # Sender details
-            sender_id = None
-            for node in self.nodes:
-                if node.ip == sender_ip and node.port == sender_port:
-                    sender_id = node.id
-                    break
+        updated = False
+        with self.lock:
+            # Update routing table for sender
+            for dest_id, received_cost in received_table.items():
+                dest_id = int(dest_id)
+                received_cost = float(received_cost)
+                
+                # Cost to sender + received cost
+                cost_to_sender = self.routing_table[self.my_id].get(sender_id, float('inf'))
+                new_cost = cost_to_sender + received_cost
 
-            if sender_id is None:
-                print("Invalid sender details. Ignoring message.")
-                return
+                # Only update if the new cost is better
+                if dest_id not in self.routing_table[self.my_id] or new_cost < self.routing_table[self.my_id][dest_id]:
+                    print(f"[DEBUG] Updating route to {dest_id}: cost {self.routing_table[self.my_id].get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
+                    self.routing_table[self.my_id][dest_id] = new_cost
+                    updated = True
 
-            # Parse fields
-            offset = 8
-            updated = False
-            with self.lock:
-                for _ in range(num_fields):
-                    dest_ip = socket.inet_ntoa(message[offset:offset+4])
-                    dest_port, dest_id, cost = struct.unpack("!HHH", message[offset+4:offset+10])
-                    offset += 10
-
-                    # Update routing table
-                    current_cost = self.routing_table[self.my_id].get(dest_id, float('inf'))
-                    new_cost = self.routing_table[self.my_id].get(sender_id, float('inf')) + cost
-                    if new_cost < current_cost:
-                        self.routing_table[self.my_id][dest_id] = new_cost
-                        updated = True
-
-            if updated:
-                print("[DEBUG] Routing table updated based on received message.")
-                self.recalculate_routes()
-        except Exception as e:
-            print(f"Error processing message: {e}")
+        if updated:
+            print("[DEBUG] Routing table updated based on received message.")
+            self.recalculate_routes()
 
     def recalculate_routes(self):
-        """Recalculate the best routes."""
+        """Recalculate the best routes based on updated routing tables."""
         print("[DEBUG] Recalculating routes...")
+        with self.lock:
+            for dest_id in self.routing_table[self.my_id]:
+                # Find the best next hop for each destination
+                best_next_hop = None
+                best_cost = float('inf')
+                for neighbor_id in self.neighbors:
+                    if dest_id in self.routing_table[neighbor_id]:
+                        cost_via_neighbor = self.routing_table[self.my_id].get(neighbor_id, float('inf')) + self.routing_table[neighbor_id][dest_id]
+                        if cost_via_neighbor < best_cost:
+                            best_cost = cost_via_neighbor
+                            best_next_hop = neighbor_id
+
+                if best_next_hop is not None:
+                    self.routing_table[self.my_id][dest_id] = best_cost
+                else:
+                    self.routing_table[self.my_id][dest_id] = float('inf')  # No route found
+
         self.display_routing_table()
 
     def display_routing_table(self):
-        """Display the routing table with all possible paths."""
+        """Display the routing table."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
-        with self.lock:
-            for dest_id in sorted(self.routing_table.keys()):
-                for next_hop, cost in self.routing_table[dest_id].items():
-                    cost_str = "infinity" if cost == float('inf') else cost
-                    print(f"{dest_id:<14}{next_hop:<14}{cost_str}")
+        seen_destinations = set()  # Keep track of unique destinations
+        for dest_id, cost in self.routing_table[self.my_id].items():
+            if dest_id not in seen_destinations:
+                seen_destinations.add(dest_id)
+                next_hop = self.get_best_next_hop(dest_id)
+                cost_str = "infinity" if cost == float('inf') else cost
+                print(f"{dest_id:<14}{next_hop:<14}{cost_str}")
         print()
+
+    def get_best_next_hop(self, dest_id):
+        """Find the best next hop for a given destination."""
+        best_next_hop = None
+        best_cost = float('inf')
+        for neighbor_id in self.neighbors:
+            if dest_id in self.routing_table[neighbor_id]:
+                cost_via_neighbor = self.routing_table[self.my_id].get(neighbor_id, float('inf')) + self.routing_table[neighbor_id][dest_id]
+                if cost_via_neighbor < best_cost:
+                    best_cost = cost_via_neighbor
+                    best_next_hop = neighbor_id
+        return best_next_hop if best_next_hop else "None"
 
     def step(self):
         """Send routing updates to neighbors using binary format."""
