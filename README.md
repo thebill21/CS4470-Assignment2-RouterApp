@@ -1,6 +1,6 @@
 # This project has MIT License to our team.
 #### Name: Tuan Khai Tran, Li Jiahao
-#### Organization: California State University, Los Angeles
+#### School / Organization: California State University, Los Angeles
 #### Course: CS 4470 - Fall 2024
 #### Professor: Zilong Ye
 # CS4470-Assignment2-RouterApp
