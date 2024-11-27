@@ -91,6 +91,7 @@ class Router:
         """Reads the topology file and initializes routing tables."""
         print(f"Loading topology from file: {self.topology_file}")
         try:
+            self.topology = defaultdict(dict)  # Store topology in memory
             with open(self.topology_file, 'r') as f:
                 lines = f.read().strip().split('\n')
             num_servers = int(lines[0])
@@ -113,6 +114,9 @@ class Router:
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
+                self.topology[from_id][to_id] = cost  # Store in-memory topology
+                self.topology[to_id][from_id] = cost  # Ensure symmetry
+
                 if from_id == self.my_id:
                     self.neighbors[to_id] = cost
                     self.routing_table[to_id] = cost
@@ -325,31 +329,37 @@ class Router:
 
     def update(self, server1_id, server2_id, new_cost):
         """Update a link cost bi-directionally and synchronize topology."""
+        print(f"Updating edge {server1_id} <-> {server2_id} with cost {new_cost}.")
+        update_message = {
+            "command": "update_edge",
+            "server1_id": server1_id,
+            "server2_id": server2_id,
+            "new_cost": new_cost
+        }
+        for neighbor_id in self.neighbors:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor:
+                self.send_message(neighbor, update_message)
+
+        # Apply the update locally
+        self.apply_update(server1_id, server2_id, new_cost)
+
+    def apply_update(self, server1_id, server2_id, new_cost):
+        """Apply the edge update and recompute routing table."""
         with self.lock:
-            # Update local view of the link
+            # Update topology if directly connected
             if server1_id == self.my_id or server2_id == self.my_id:
                 neighbor_id = server2_id if server1_id == self.my_id else server1_id
                 self.neighbors[neighbor_id] = new_cost
                 self.routing_table[neighbor_id] = new_cost
                 self.next_hop[neighbor_id] = neighbor_id
-                print(f"Updated local link cost to {neighbor_id} to {new_cost}.")
+                self.topology[server1_id][server2_id] = new_cost
+                self.topology[server2_id][server1_id] = new_cost
+                print(f"Updated local topology: {server1_id} <-> {server2_id} to cost {new_cost}.")
             else:
-                print(f"This router is not involved in the link between {server1_id} and {server2_id}.")
+                print(f"Edge {server1_id} <-> {server2_id} is not directly connected to this router.")
 
-            # Broadcast topology update to all neighbors
-            update_message = {
-                "command": "update",
-                "server1_id": server1_id,
-                "server2_id": server2_id,
-                "new_cost": new_cost
-            }
-            for neighbor_id in self.neighbors:
-                neighbor = self.get_node_by_id(neighbor_id)
-                if neighbor:
-                    print(f"Notifying neighbor {neighbor_id} about the link update.")
-                    self.send_message(neighbor, update_message)
-
-            # Invalidate and recompute affected routes
+            # Rollback to the original topology and reapply Bellman-Ford
             self.recompute_routing_table()
 
     def recompute_routing_table(self):
