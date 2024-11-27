@@ -137,10 +137,17 @@ class Router:
         """Recalculate the best routes using Bellman-Ford."""
         print("[DEBUG] Recalculating routes...")
         distances, next_hops = self.bellman_ford(self.global_graph, self.my_id)
+
         with self.lock:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
-                self.next_hop[dest_id] = next_hops.get(dest_id)
+
+                # Ensure next hop for direct neighbors remains unchanged
+                if dest_id in self.neighbors:
+                    self.next_hop[dest_id] = dest_id
+                else:
+                    self.next_hop[dest_id] = next_hops.get(dest_id, None)
+
         self.display_routing_table()
 
     def bellman_ford(self, graph, source):
@@ -148,12 +155,19 @@ class Router:
         distances = {node: float('inf') for node in graph}
         next_hops = {}
         distances[source] = 0
+
         for _ in range(len(graph) - 1):
             for u in graph:
                 for v in graph[u]:
-                    if distances[u] + graph[u][v] < distances[v]:
-                        distances[v] = distances[u] + graph[u][v]
+                    new_cost = distances[u] + graph[u][v]
+                    if new_cost < distances[v]:
+                        distances[v] = new_cost
                         next_hops[v] = u
+
+        # Ensure direct neighbors are preserved as next hops
+        for neighbor_id in self.neighbors:
+            next_hops[neighbor_id] = neighbor_id
+
         return distances, next_hops
 
     def step(self):
@@ -192,8 +206,8 @@ class Router:
         for dest_id in sorted(self.routing_table.keys()):
             next_hop = self.next_hop.get(dest_id, None)
             cost = self.routing_table[dest_id]
-            next_hop_str = next_hop if next_hop is not None else "None"
-            cost_str = "infinity" if cost == float('inf') else cost
+            next_hop_str = str(next_hop) if next_hop is not None else "None"
+            cost_str = "infinity" if cost == float('inf') else f"{cost:.1f}"
             print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
         print()
 
@@ -216,6 +230,15 @@ class Router:
                     server2_id = int(command_line[2])
                     new_cost = float(command_line[3])
                     self.update(server1_id, server2_id, new_cost)
+                    time.sleep(2)
+                    self.update(server1_id, server2_id, new_cost)
+                    time.sleep(2)
+                    self.update(server1_id, server2_id, new_cost)
+                    time.sleep(2)
+                    self.update(server1_id, server2_id, new_cost)
+                    time.sleep(2)
+                    self.update(server1_id, server2_id, new_cost)
+                        
                 elif command == "exit":
                     self.running = False
                     print("Exiting...")
