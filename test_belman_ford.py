@@ -173,57 +173,6 @@ class Router:
         finally:
             client_socket.close()
 
-    # def process_message(self, message):
-    #     """Process incoming messages, including routing updates and link update commands."""
-    #     self.number_of_packets_received += 1  # Increment packet count for statistics
-
-    #     if "command" in message:
-    #         # Handle specific commands, such as 'update'
-    #         if message["command"] == "update":
-    #             server1_id = int(message["server1_id"])
-    #             server2_id = int(message["server2_id"])
-    #             new_cost = float(message["new_cost"])
-    #             print(f"Received update command: Updating link {server1_id} <-> {server2_id} to cost {new_cost}.")
-                
-    #             if self.my_id in (server1_id, server2_id):
-    #                 # Update local routing table and neighbors
-    #                 neighbor_id = server2_id if server1_id == self.my_id else server1_id
-    #                 with self.lock:
-    #                     self.neighbors[neighbor_id] = new_cost
-    #                     self.routing_table[neighbor_id] = new_cost
-    #                     self.next_hop[neighbor_id] = neighbor_id
-    #                     print(f"Updated cost to neighbor {neighbor_id} to {new_cost}.")
-    #                 self.step()  # Propagate the updated routing table
-    #             return
-
-    #     # Process routing table updates from neighbors
-    #     sender_id = int(message.get("id"))  # Ensure the sender ID is an integer
-    #     received_table = {int(k): float(v) for k, v in message.get("routing_table", {}).items()}  # Convert keys and values
-
-    #     print(f"Processing routing update from Router {sender_id}. Received table: {received_table}")
-
-    #     updated = False  # Track whether the routing table was updated
-    #     with self.lock:
-    #         for dest_id, received_cost in received_table.items():
-    #             if dest_id == self.my_id:
-    #                 continue  # Skip routes to self
-
-    #             # Calculate new cost via the sender
-    #             cost_to_sender = self.routing_table.get(sender_id, float('inf'))
-    #             new_cost = cost_to_sender + received_cost
-
-    #             # Update only if the new cost is better
-    #             if new_cost < self.routing_table.get(dest_id, float('inf')):
-    #                 print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
-    #                 self.routing_table[dest_id] = new_cost
-    #                 self.next_hop[dest_id] = sender_id
-    #                 updated = True
-
-    #     if updated:
-    #         print("Routing table updated based on received message.")
-    #         self.display_routing_table()  # Display the updated routing table
-    #         self.step()  # Trigger routing updates to neighbors
-
     def process_message(self, message):
         """Process incoming messages, including routing updates and topology updates."""
         self.number_of_packets_received += 1  # Increment the packet count for statistics
@@ -233,26 +182,28 @@ class Router:
             crashed_server_id = message.get("crashed_server_id")
             print(f"[INFO] Received crash notification for Server {crashed_server_id}.")
 
-            # Debug: Topology and neighbors before handling the crash
-            print(f"[DEBUG] Topology before handling crash: {dict(self.topology)}")
-            print(f"[DEBUG] Neighbors before handling crash: {self.neighbors}")
-
-            # Update topology to reflect the crash
             with self.lock:
-                if crashed_server_id in self.topology[self.my_id]:
-                    print(f"[INFO] Updating topology to reflect crash of Server {crashed_server_id}.")
-                    self.topology[self.my_id][crashed_server_id] = float('inf')
-                    self.topology[crashed_server_id][self.my_id] = float('inf')
-                
+                # Debug: Topology and neighbors before handling the crash
+                print(f"[DEBUG] Topology before handling crash: {dict(self.topology)}")
+                print(f"[DEBUG] Neighbors before handling crash: {self.neighbors}")
+
+                # Remove the crashed server from topology and neighbors
+                if crashed_server_id in self.topology:
+                    print(f"[INFO] Removing Server {crashed_server_id} from topology.")
+                    del self.topology[crashed_server_id]
+                    for node_id in self.topology:
+                        if crashed_server_id in self.topology[node_id]:
+                            del self.topology[node_id][crashed_server_id]
+
                 if crashed_server_id in self.neighbors:
                     print(f"[INFO] Removing Server {crashed_server_id} from neighbors.")
                     self.neighbors.pop(crashed_server_id, None)
 
-            # Debug: Topology and neighbors after handling the crash
-            print(f"[DEBUG] Topology after handling crash: {dict(self.topology)}")
-            print(f"[DEBUG] Neighbors after handling crash: {self.neighbors}")
+                # Debug: Topology and neighbors after handling the crash
+                print(f"[DEBUG] Topology after handling crash: {dict(self.topology)}")
+                print(f"[DEBUG] Neighbors after handling crash: {self.neighbors}")
 
-            # Recompute routing table
+            # Recompute the routing table
             print(f"[INFO] Recomputing routing table after Server {crashed_server_id} crash.")
             self.recompute_routing_table()
 
@@ -578,7 +529,7 @@ class Router:
     def crash(self):
         """Simulate server crash by closing all connections."""
         print("[COMMAND] Simulating server crash. Closing all connections.")
-        
+
         # Notify all neighbors about the crash
         for neighbor_id in list(self.neighbors.keys()):
             print(f"[INFO] Notifying neighbor {neighbor_id} of server crash.")
@@ -590,12 +541,8 @@ class Router:
                 }
                 self.send_message(neighbor, message)
 
-        # Disable links to all neighbors
-        print("[INFO] Broadcasting crash event to neighbors.")
-        for neighbor_id in list(self.neighbors.keys()):
-            self.disable(neighbor_id)  # Call disable for each neighbor
-
-        # Clear local data structures
+        # Stop the server
+        print("[INFO] Clearing local data structures and stopping the server.")
         self.running = False
         self.neighbors.clear()
         self.routing_table.clear()
