@@ -484,22 +484,9 @@ class Router:
                 print(f"[ERROR] Server {server_id} is not a neighbor.")
                 return
 
-            # Remove the link from the topology and set cost to infinity
+            # Convert the disable command into an update with infinity cost
             print(f"[COMMAND] Disabling link to Server {server_id}.")
-            self.neighbors[server_id] = float('inf')  # Mark the neighbor as unreachable
-            self.routing_table[server_id] = float('inf')
-            self.next_hop[server_id] = None
-            if self.my_id in self.topology and server_id in self.topology[self.my_id]:
-                self.topology[self.my_id][server_id] = float('inf')
-                self.topology[server_id][self.my_id] = float('inf')
-                print(f"[INFO] Link to Server {server_id} disabled. Cost set to infinity.")
-
-            # Recompute the routing table
-            print("[INFO] Recomputing routing table after disabling a link.")
-            self.recompute_routing_table()
-
-            # Stop sending updates to the disabled server
-            print(f"[INFO] Stopping updates to disabled server {server_id}.")
+            self.update(self.my_id, server_id, float('inf'))  # Update my link to the server
 
     def run(self):
         """Process commands."""
