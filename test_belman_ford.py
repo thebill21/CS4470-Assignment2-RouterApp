@@ -255,9 +255,14 @@ class Router:
         # Handle routing table updates
         if "id" in message and "routing_table" in message:
             sender_id = int(message["id"])  # Sender's ID
-            received_table = {
-                int(k): float(v) for k, v in message["routing_table"].items()
-            }  # Convert table keys/values to integers/floats
+            
+            # Ignore updates from disabled neighbors
+            if sender_id in self.neighbors and self.neighbors[sender_id] == float('inf'):
+                print(f"[INFO] Ignoring updates from disabled neighbor {sender_id}.")
+                return
+
+            # Process received routing table updates
+            received_table = {int(k): float(v) for k, v in message["routing_table"].items()}
 
             print(f"[INFO] Received routing update from Router {sender_id}: {received_table}")
 
@@ -439,7 +444,6 @@ class Router:
                 else:
                     self.routing_table[node.id] = float('inf')  # All others are unreachable
                     self.next_hop[node.id] = None
-            # Debug: Display the initialized routing table
             self.display_routing_table()
 
             # Start Bellman-Ford iterations
@@ -453,19 +457,15 @@ class Router:
                             self.routing_table[to_id] = self.routing_table[from_id] + cost
                             self.next_hop[to_id] = self.next_hop[from_id]
                             updated = True
-                            # Debug: Log updates for the current iteration
                             print(f"[DEBUG] Updated route: Destination={to_id}, Cost={old_cost} -> {self.routing_table[to_id]}, Next Hop={self.next_hop[to_id]}")
                 if not updated:
-                    # Debug: Log that no updates were made, so the algorithm terminates early
                     print("[DEBUG] No updates in this iteration, stopping early.")
                     break
 
-            # Debug: Final routing table after Bellman-Ford
             print("[INFO] Final routing table after Bellman-Ford:")
             self.display_routing_table()
 
         print("[INFO] Routing table recomputed.")
-        self.display_routing_table()
 
     def display_routing_table(self):
         """Display the routing table."""
@@ -483,10 +483,10 @@ class Router:
             if server_id not in self.neighbors:
                 print(f"[ERROR] Server {server_id} is not a neighbor.")
                 return
-            
+
             # Remove the link from the topology and set cost to infinity
             print(f"[COMMAND] Disabling link to Server {server_id}.")
-            self.neighbors.pop(server_id, None)
+            self.neighbors[server_id] = float('inf')  # Mark the neighbor as unreachable
             self.routing_table[server_id] = float('inf')
             self.next_hop[server_id] = None
             if self.my_id in self.topology and server_id in self.topology[self.my_id]:
@@ -497,6 +497,9 @@ class Router:
             # Recompute the routing table
             print("[INFO] Recomputing routing table after disabling a link.")
             self.recompute_routing_table()
+
+            # Stop sending updates to the disabled server
+            print(f"[INFO] Stopping updates to disabled server {server_id}.")
 
     def run(self):
         """Process commands."""
