@@ -236,6 +236,9 @@ class Router:
 
                 # Propagate the change to neighbors
                 self.step()
+
+                # Recompute routing table after topology update
+                self.recompute_routing_table()
                 return
 
         # Process routing table updates from neighbors
@@ -346,8 +349,30 @@ class Router:
                     print(f"Notifying neighbor {neighbor_id} about the link update.")
                     self.send_message(neighbor, update_message)
 
-            # Recompute routing table after updating the topology
+            # Invalidate and recompute affected routes
+            self.recompute_routing_table()
+
+    def recompute_routing_table(self):
+        """Recompute the routing table from scratch after a topology update."""
+        print("Recomputing routing table...")
+        with self.lock:
+            # Reset routing table entries
+            for node in self.nodes:
+                if node.id == self.my_id:
+                    self.routing_table[node.id] = 0  # Cost to self is 0
+                    self.next_hop[node.id] = self.my_id
+                elif node.id in self.neighbors:
+                    self.routing_table[node.id] = self.neighbors[node.id]  # Direct neighbors
+                    self.next_hop[node.id] = node.id
+                else:
+                    self.routing_table[node.id] = float('inf')  # All others are unreachable
+                    self.next_hop[node.id] = None
+
+            # Reapply the Bellman-Ford algorithm
             self.step()
+
+        print("Routing table recomputed.")
+        self.display_routing_table()
 
     def display_routing_table(self):
         """Display the routing table."""
