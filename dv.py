@@ -48,6 +48,7 @@ class Router:
         self.connect_neighbors()
         print("Initialization complete.\n")
 
+    # Li Jiahao
     def start_periodic_updates(self):
         """Starts a thread to periodically send routing updates to neighbors."""
         def periodic_update():
@@ -57,6 +58,7 @@ class Router:
 
         threading.Thread(target=periodic_update, daemon=True).start()
 
+    # Li Jiahao
     def connect_neighbors(self):
         """Attempts to connect to all neighbors."""
         print("Attempting to connect to neighbors...")
@@ -73,6 +75,7 @@ class Router:
             else:
                 print(f"Neighbor {neighbor_id} not found in topology.")
 
+    # Li Jiahao
     def get_node_by_id(self, node_id):
         """Fetches a node by its ID."""
         for node in self.nodes:
@@ -81,6 +84,7 @@ class Router:
         print(f"Node {node_id} not found.")
         return None
 
+    # Li Jiahao
     def get_my_ip(self):
         """Get the machine's local IP address."""
         try:
@@ -93,6 +97,7 @@ class Router:
             print(f"Error determining local IP address: {e}")
             return "127.0.0.1"  # Fallback to localhost if detection fails
 
+    # Li Jiahao
     def load_topology(self):
         """Reads the topology file and initializes routing tables."""
         print(f"Loading topology from file: {self.topology_file}")
@@ -159,6 +164,7 @@ class Router:
         except Exception as e:
             print(f"[ERROR] Failed to load topology: {e}")
 
+    # Li Jiahao
     def start_listening(self):
         """Start a server socket to listen for incoming connections."""
         def listen():
@@ -176,6 +182,7 @@ class Router:
 
         threading.Thread(target=listen, daemon=True).start()
 
+    # Tuan Khai Tran
     def handle_client(self, client_socket):
         """Handle an incoming client connection."""
         try:
@@ -194,6 +201,7 @@ class Router:
         finally:
             client_socket.close()
 
+    # Li Jiahao + Tuan Khai Tran
     def process_message(self, message):
         """Process incoming messages, including routing updates and topology updates."""
         self.number_of_packets_received += 1  # Increment the packet count for statistics
@@ -328,6 +336,7 @@ class Router:
         # Handle unrecognized or unsupported commands
         print("[ERROR] Unknown or unsupported command received. Ignoring message.")
 
+    # Tuan Khai Tran
     def broadcast_topology_update(self, server1_id, server2_id, new_cost, origin_id):
         """Broadcast topology update to all neighbors except the origin."""
         update_message = {
@@ -343,6 +352,7 @@ class Router:
                 print(f"Forwarding topology update to neighbor {neighbor.id}.")
                 self.send_message(neighbor, update_message)
 
+    # Li Jiahao
     def step(self):
         """Send routing updates to neighbors."""
         print("\n[STEP] Triggering routing updates to neighbors.")
@@ -360,6 +370,7 @@ class Router:
                 print(f"[STEP] Neighbor {neighbor_id} not found in node list. Skipping.")
         print("[STEP] Routing updates broadcasted.\n")
 
+    # Li Jiahao
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor."""
         print(f"Sending message to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}")
@@ -373,6 +384,7 @@ class Router:
         except Exception as e:
             print(f"Error sending message to {neighbor.ip}:{neighbor.port}: {e}")
 
+    # Tuan Khai Tran
     def update(self, server1_id, server2_id, new_cost):
         """Update a link cost bi-directionally and broadcast to the entire network."""
         print(f"[INFO] Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
@@ -445,6 +457,7 @@ class Router:
         print("[INFO] Recomputing routing table after local topology update.")
         self.recompute_routing_table()
 
+    # Tuan Khai Tran -> Currently not in use
     def apply_update(self, server1_id, server2_id, new_cost):
         """Apply the edge update and recompute routing table."""
         with self.lock:
@@ -463,6 +476,7 @@ class Router:
             # Rollback to the original topology and reapply Bellman-Ford
             self.recompute_routing_table()
 
+    # Tuan Khai Tran
     def recompute_routing_table(self):
         """Recompute the routing table using the Bellman-Ford algorithm."""
         print("[INFO] Recomputing routing table...")
@@ -505,6 +519,7 @@ class Router:
             # Display the updated routing table
             self.display_routing_table()     
 
+    # Li Jiahao
     def display_routing_table(self):
         """Display the routing table."""
         print("\nRouting Table:")
@@ -516,6 +531,7 @@ class Router:
             print(f"     {dest_id:<14}{next_hop_display:<14}{cost}")
         print()
 
+    # Tuan Khai Tran
     def disable(self, server_id):
         """Disable a link to a given server."""
         if server_id not in self.neighbors:
@@ -555,6 +571,7 @@ class Router:
         print("[INFO] Recomputing routing table after disabling the link.")
         self.recompute_routing_table()
 
+    # Tuan Khai Tran
     def crash(self):
         """Simulate server crash by closing all connections."""
         print("[COMMAND] Simulating server crash. Closing all connections.")
@@ -578,6 +595,7 @@ class Router:
         self.next_hop.clear()
         print("[INFO] Server crash simulated. Exiting...")
 
+    # Li Jiahao + Tuan Khai Tran
     def run(self):
         """Process commands."""
         while self.running:
@@ -617,6 +635,7 @@ class Router:
                 # Handle invalid input errors
                 print(f"{cmd} ERROR: Invalid input. {str(e)}")
 
+# Li Jiahao + Tuan Khai Tran
 if __name__ == "__main__":
     print("********* Distance Vector Routing Protocol **********")
     print("Use: server -t <topology-file-name> -i <routing-update-interval>")
