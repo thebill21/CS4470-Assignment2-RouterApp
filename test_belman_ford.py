@@ -635,13 +635,16 @@ class Router:
                 self.display_routing_table()
             elif cmd == "update" and len(command) == 4:
                 try:
-                    server1_id = int(command[1])
-                    server2_id = int(command[2])
-                    new_cost = int(command[3])
+                    server1_id = int(command[1])  # Validate that server1_id is an integer
+                    server2_id = int(command[2])  # Validate that server2_id is an integer
+                    if command[3].lower() == "inf":  # Check for 'inf' as a valid cost
+                        new_cost = float('inf')
+                    else:
+                        new_cost = float(command[3])  # Validate that new_cost is a float
                     print(f"[COMMAND] Updating edge {server1_id} <-> {server2_id} with cost {new_cost}.")
                     self.update(server1_id, server2_id, new_cost)
-                except ValueError:
-                    print("[ERROR] Invalid input. Use: update <server1_id> <server2_id> <new_cost>")
+                except ValueError as e:
+                    print(f"[ERROR] Invalid input. Use: update <server1_id> <server2_id> <new_cost>. Error: {e}")
             elif cmd == "step":
                 print("[COMMAND] Manually triggering routing updates.")
                 self.step()
