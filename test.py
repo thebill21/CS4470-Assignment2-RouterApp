@@ -1,5 +1,4 @@
 import socket
-import selectors
 import threading
 import time
 import json
@@ -26,7 +25,7 @@ class Router:
         self.my_ip = self.get_my_ip()
         self.my_id = None
         self.my_node = None
-        self.nodes = []  # List of all nodes in the topology
+        self.nodes = []  # Initialize nodes list
         self.topology_file = topology_file
         self.update_interval = update_interval
         self.routing_table = {}
@@ -34,14 +33,13 @@ class Router:
         self.next_hop = {}
         self.running = True
         self.lock = threading.Lock()
-        self.selector = selectors.DefaultSelector()
         self.number_of_packets_received = 0
 
         print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
-        self.start_server()
+        self.start_listening()
         self.start_periodic_updates()
-        self.start_health_monitor()
+        self.connect_neighbors()
         print("Initialization complete.\n")
 
     def get_my_ip(self):
@@ -78,53 +76,63 @@ class Router:
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
                 if from_id == self.my_id:
-                    neighbor = self.get_node_by_id(to_id)
-                    self.neighbors.add(neighbor)
-                    self.routing_table[neighbor.id] = cost
-                    self.next_hop[neighbor.id] = neighbor.id
+                    self.neighbors.add(to_id)
+                    self.routing_table[to_id] = cost
+                    self.next_hop[to_id] = to_id
 
         except Exception as e:
             print(f"Error loading topology: {e}")
 
-    def start_server(self):
-        """Starts the server to handle incoming messages."""
-        def server_task():
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-                server.bind((self.my_ip, self.my_node.port))
-                server.listen(5)
-                server.setblocking(False)
-                self.selector.register(server, selectors.EVENT_READ, self.accept_connection)
+    def start_listening(self):
+        """Start a server socket to listen for incoming connections."""
+        def listen():
+            try:
+                server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                server_socket.bind((self.my_ip, self.my_node.port))
+                server_socket.listen(5)
                 print(f"Listening on {self.my_ip}:{self.my_node.port}")
                 while self.running:
-                    events = self.selector.select(timeout=1)
-                    for key, mask in events:
-                        callback = key.data
-                        callback(key.fileobj)
+                    client_socket, address = server_socket.accept()
+                    self.handle_client(client_socket)
+            except Exception as e:
+                print(f"Error in listening thread: {e}")
 
-        threading.Thread(target=server_task, daemon=True).start()
+        threading.Thread(target=listen, daemon=True).start()
 
-    def accept_connection(self, server):
-        """Accepts new client connections."""
-        client, addr = server.accept()
-        print(f"Accepted connection from {addr}")
-        client.setblocking(False)
-        self.selector.register(client, selectors.EVENT_READ, self.read_message)
-
-    def read_message(self, client):
-        """Reads a message from the client."""
+    def handle_client(self, client_socket):
+        """Handle an incoming client connection."""
         try:
-            message = client.recv(1024).decode()
-            if message:
+            message = client_socket.recv(1024).decode()
+            if message.strip():
                 json_message = json.loads(message)
                 self.process_message(json_message)
-            else:
-                self.selector.unregister(client)
-                client.close()
         except Exception as e:
-            print(f"Error reading message: {e}")
+            print(f"Error handling client: {e}")
+        finally:
+            client_socket.close()
+
+    def connect_neighbors(self):
+        """Attempts to connect to all neighbors."""
+        for neighbor_id in self.neighbors:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor:
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.connect((neighbor.ip, neighbor.port))
+                except Exception as e:
+                    print(f"Error connecting to neighbor {neighbor_id}: {e}")
+
+    def start_periodic_updates(self):
+        """Starts a thread to periodically send updates to neighbors."""
+        def periodic_update():
+            while self.running:
+                self.step()
+                time.sleep(self.update_interval)
+
+        threading.Thread(target=periodic_update, daemon=True).start()
 
     def process_message(self, message):
-        """Processes incoming routing updates."""
+        """Process incoming routing table updates."""
         self.number_of_packets_received += 1
         sender_id = message.get("id")
         received_table = message.get("routing_table", {})
@@ -145,38 +153,28 @@ class Router:
             print("Routing table updated.")
             self.display_routing_table()
 
-    def start_periodic_updates(self):
-        """Periodically sends updates to neighbors."""
-        def update_task():
-            while self.running:
-                self.send_updates()
-                time.sleep(self.update_interval)
+    def update(self, server1_id, server2_id, new_cost):
+        """Update the cost of a link between two servers."""
+        with self.lock:
+            if server1_id == self.my_id or server2_id == self.my_id:
+                target_id = server2_id if server1_id == self.my_id else server1_id
+                if target_id in self.neighbors:
+                    self.routing_table[target_id] = new_cost
+                    self.next_hop[target_id] = target_id
+                    print(f"Updated cost to server {target_id} to {new_cost}")
+                    self.step()  # Trigger routing updates
+                else:
+                    print("Can only update cost to direct neighbors.")
+            else:
+                print("This server is not involved in the specified link.")
 
-        threading.Thread(target=update_task, daemon=True).start()
-
-    def start_health_monitor(self):
-        """Monitors the health of neighbors."""
-        def health_check():
-            while self.running:
-                with self.lock:
-                    for neighbor in self.neighbors:
-                        try:
-                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                                s.settimeout(2)
-                                s.connect((neighbor.ip, neighbor.port))
-                        except Exception:
-                            print(f"Neighbor {neighbor.id} is unreachable. Marking as offline.")
-                            self.routing_table[neighbor.id] = float('inf')
-                            self.next_hop[neighbor.id] = None
-                time.sleep(5)
-
-        threading.Thread(target=health_check, daemon=True).start()
-
-    def send_updates(self):
-        """Sends routing table updates to all neighbors."""
+    def step(self):
+        """Send routing updates to neighbors."""
         message = {"id": self.my_id, "routing_table": self.routing_table}
         for neighbor in self.neighbors:
-            self.send_message(neighbor, message)
+            neighbor_node = self.get_node_by_id(neighbor)
+            if neighbor_node:
+                self.send_message(neighbor_node, message)
 
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor."""
@@ -197,24 +195,36 @@ class Router:
     def display_routing_table(self):
         """Displays the routing table."""
         print("\nRouting Table:")
+        print("Destination\tNext Hop\tCost")
+        print("--------------------------------")
         for dest_id, cost in self.routing_table.items():
             next_hop = self.next_hop.get(dest_id, None)
             next_hop_str = next_hop if next_hop else "None"
             cost_str = "infinity" if cost == float('inf') else cost
-            print(f"Destination: {dest_id}, Next Hop: {next_hop_str}, Cost: {cost_str}")
+            print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
 
     def run(self):
-        """Runs the router, handling user commands."""
-        print("Router is running. Enter commands:")
+        """Runs the router and handles user commands."""
         while self.running:
             command = input("Enter command: ").strip().lower()
-            if command == "display":
+            parts = command.split()
+            if parts[0] == "display":
                 self.display_routing_table()
-            elif command == "packets":
+            elif parts[0] == "step":
+                self.step()
+            elif parts[0] == "update" and len(parts) == 4:
+                try:
+                    server1_id = int(parts[1])
+                    server2_id = int(parts[2])
+                    new_cost = int(parts[3])
+                    self.update(server1_id, server2_id, new_cost)
+                except ValueError:
+                    print("Invalid input. Use: update <server1_id> <server2_id> <new_cost>")
+            elif parts[0] == "packets":
                 print(f"Packets received: {self.number_of_packets_received}")
-            elif command == "stop":
+            elif parts[0] == "crash":
                 self.running = False
-                print("Stopping the router...")
+                print("Router stopped.")
             else:
                 print("Invalid command.")
 
