@@ -14,7 +14,7 @@ this program contain only one file listed above, all other files are just for te
 4 computer can act as 4 independent routers.
 text file 'server1_init.txt' to 'server2_init.txt' are topology files for each computer with pre-set nodes, connections / edges, and cost with format:
 
-#### <num-servers>
+#### (num-servers)
 #### <num-neighbors>
 #### <server-ID> <server-IP> <server-port>
 #### <server-ID1> <server-ID2> <cost>
