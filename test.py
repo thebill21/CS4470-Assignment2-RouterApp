@@ -139,17 +139,21 @@ class Router:
                 print(f"[DEBUG] Restored link cost to Neighbor {neighbor_id}: {initial_cost}")
                 
                 # Recalculate routes and propagate updates
-                # self.recalculate_routes()
-                # self.step()  # Notify neighbors about the updated routing table
+                self.recalculate_routes()
+                self.step()  # Notify neighbors about the updated routing table
             else:
                 print(f"[DEBUG] Neighbor {neighbor_id} not found for reactivation.")
         print(f"[DEBUG] Exiting mark_as_reactivated for neighbor {neighbor_id}")
 
     def get_initial_cost_to_neighbor(self, neighbor_id):
         print(f"[DEBUG] Entering get_initial_cost_to_neighbor for neighbor {neighbor_id}")
-        for neighbor in self.nodes:
-            if neighbor.id == neighbor_id:
-                return self.routing_table.get(neighbor_id, float('inf'))
+        for line in open(self.topology_file).readlines():
+            parts = line.strip().split()
+            if len(parts) == 3:
+                from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
+                if (from_id == self.my_id and to_id == neighbor_id) or \
+                (to_id == self.my_id and from_id == neighbor_id):
+                    return cost
         print(f"[DEBUG] Exiting get_initial_cost_to_neighbor for neighbor {neighbor_id}")
         return float('inf')
 
@@ -165,8 +169,11 @@ class Router:
                 for neighbor_id in self.neighbors:
                     cost_to_neighbor = self.routing_table.get(neighbor_id, float('inf'))
                     neighbor_cost_to_dest = self.get_neighbor_cost_to_dest(neighbor_id, dest_id)
+
+                    # Skip invalid routes
                     if cost_to_neighbor == float('inf') or neighbor_cost_to_dest == float('inf'):
                         continue
+
                     total_cost = cost_to_neighbor + neighbor_cost_to_dest
                     if total_cost < best_cost:
                         best_cost = total_cost
@@ -318,11 +325,14 @@ class Router:
                 if dest_id == self.my_id:
                     continue
 
-                # Calculate new cost via sender
                 cost_to_sender = self.routing_table.get(sender_id, float('inf'))
                 new_cost = cost_to_sender + received_cost
 
-                # Update only if new cost is better
+                # Skip routes that would create a feedback loop
+                if self.next_hop.get(dest_id) == sender_id:
+                    print(f"[DEBUG] Skipping update for {dest_id} via {sender_id} to avoid feedback loop.")
+                    continue
+
                 if new_cost < self.routing_table.get(dest_id, float('inf')):
                     print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
                     self.routing_table[dest_id] = new_cost
@@ -381,7 +391,8 @@ class Router:
         print("Sending updates to neighbors...")
         message = {
             "id": self.my_id,
-            "routing_table": self.routing_table
+            # Send only valid routes (exclude infinity-cost routes)
+            "routing_table": {k: v for k, v in self.routing_table.items() if v != float('inf')}
         }
         for neighbor_id in self.neighbors:
             neighbor = self.get_node_by_id(neighbor_id)
