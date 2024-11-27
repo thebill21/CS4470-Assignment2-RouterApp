@@ -57,21 +57,22 @@ class Router:
         try:
             with open(self.topology_file, 'r') as f:
                 lines = f.read().strip().split('\n')
-            num_servers = int(lines[0])
-            num_neighbors = int(lines[1])
+            num_servers = int(lines[0])  # Number of servers
+            num_neighbors = int(lines[1])  # Number of links
 
             # Parse nodes
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
-                node = Node(int(parts[0]), parts[1], int(parts[2]))
+                node_id, ip, port = int(parts[0]), parts[1], int(parts[2])
+                node = Node(node_id, ip, port)
                 self.nodes.append(node)
-                if parts[1] == self.my_ip:
-                    self.my_id = node.id
+                if ip == self.my_ip:
+                    self.my_id = node_id
                     self.my_node = node
-                    self.routing_table[node.id] = 0
-                    self.next_hop[node.id] = node.id
+                    self.routing_table[node_id] = 0  # Cost to self is 0
+                    self.next_hop[node_id] = node_id  # Next hop to self is self
 
-            # Parse neighbors and populate `next_door_model`
+            # Parse neighbors and initialize routing information
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), float(parts[2])
@@ -80,15 +81,18 @@ class Router:
 
                 if from_id == self.my_id:
                     self.neighbors[to_id] = cost
-                    self.next_door_model[to_id] = {self.my_id: cost}  # Initialize with direct cost
+                    self.routing_table[to_id] = cost  # Direct link cost
+                    self.next_hop[to_id] = to_id  # Direct neighbor as next hop
+                    self.next_door_model[to_id] = {self.my_id: cost}  # Initialize next-door model
                 elif to_id == self.my_id:
                     self.neighbors[from_id] = cost
-                    self.next_door_model[from_id] = {self.my_id: cost}  # Initialize with direct cost
+                    self.routing_table[from_id] = cost  # Direct link cost
+                    self.next_hop[from_id] = from_id  # Direct neighbor as next hop
+                    self.next_door_model[from_id] = {self.my_id: cost}  # Initialize next-door model
 
             print("Topology loaded successfully.\n")
         except Exception as e:
             print(f"Error loading topology: {e}")
-
     def start_listening(self):
         """Start a server socket to listen for incoming connections."""
         def listen():
