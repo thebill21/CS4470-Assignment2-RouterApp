@@ -33,6 +33,7 @@ class Router:
         self.lock = threading.Lock()
         self.number_of_packets_received = 0  # Packet counter
         self.global_graph = defaultdict(dict)  # For Bellman-Ford
+        self.next_door_model = {}  # {neighbor_id: {destination_id: cost}}
 
         print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
@@ -59,7 +60,7 @@ class Router:
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
-            # Populate nodes and initialize routing table with direct neighbors
+            # Parse nodes
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
@@ -69,25 +70,21 @@ class Router:
                     self.my_node = node
                     self.routing_table[node.id] = 0
                     self.next_hop[node.id] = node.id
-                else:
-                    self.routing_table[node.id] = float('inf')
-                    self.next_hop[node.id] = None
 
-            # Initialize neighbors and their costs
+            # Parse neighbors and populate `next_door_model`
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
-                from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
+                from_id, to_id, cost = int(parts[0]), int(parts[1]), float(parts[2])
                 self.global_graph[from_id][to_id] = cost
                 self.global_graph[to_id][from_id] = cost
-                if from_id == self.my_id:
-                    self.routing_table[to_id] = cost
-                    self.next_hop[to_id] = to_id
-                elif to_id == self.my_id:
-                    self.routing_table[from_id] = cost
-                    self.next_hop[from_id] = from_id
 
-            print("Initial Routing Table:")
-            self.display_routing_table()
+                if from_id == self.my_id:
+                    self.neighbors[to_id] = cost
+                    self.next_door_model[to_id] = {self.my_id: cost}  # Initialize with direct cost
+                elif to_id == self.my_id:
+                    self.neighbors[from_id] = cost
+                    self.next_door_model[from_id] = {self.my_id: cost}  # Initialize with direct cost
+
             print("Topology loaded successfully.\n")
         except Exception as e:
             print(f"Error loading topology: {e}")
@@ -131,36 +128,61 @@ class Router:
 
     def process_message(self, message):
         """Process incoming routing table updates."""
-        self.number_of_packets_received += 1
-        sender_id = message['id']
-        received_table = message['routing_table']
+        try:
+            self.number_of_packets_received += 1
+            sender_id = message['id']
+            received_table = message['routing_table']
 
-        with self.lock:
-            for dest_id, cost in received_table.items():
-                self.global_graph[sender_id][int(dest_id)] = float(cost)
-                self.global_graph[int(dest_id)][sender_id] = float(cost)
+            print(f"[DEBUG] Processing message from server {sender_id}: {received_table}")
 
-        self.recalculate_routes()
+            with self.lock:
+                # Update next_door_model for the sender
+                if sender_id in self.neighbors:
+                    self.next_door_model[sender_id] = {
+                        dest_id: float(cost) for dest_id, cost in received_table.items() if dest_id != self.my_id
+                    }
+
+            # Recalculate routes after incorporating the message
+            self.recalculate_routes()
+        except Exception as e:
+            print(f"Error processing message: {e}")
 
     def recalculate_routes(self):
-        """Recalculate the best routes using Bellman-Ford."""
+        """Recalculate the best routes using next-door neighbors."""
         print("[DEBUG] Recalculating routes...")
-        distances, next_hops = self.bellman_ford(self.global_graph, self.my_id)
 
         with self.lock:
-            for dest_id, cost in distances.items():
-                self.routing_table[dest_id] = cost
+            updated_table = {}
+            updated_next_hops = {}
 
-                # Ensure next hop constraints are respected
+            for dest_id in self.routing_table:
                 if dest_id == self.my_id:
-                    self.next_hop[dest_id] = self.my_id
-                elif dest_id in self.next_hop and self.next_hop[dest_id] is not None:
-                    # Update next hop only if path is shorter
-                    if cost < self.routing_table[dest_id]:
-                        self.next_hop[dest_id] = next_hops.get(dest_id)
-                else:
-                    # Assign next hop if none exists
-                    self.next_hop[dest_id] = next_hops.get(dest_id)
+                    updated_table[dest_id] = 0
+                    updated_next_hops[dest_id] = self.my_id
+                    continue
+
+                best_cost = float('inf')
+                best_next_hop = None
+
+                for neighbor_id, edge_cost in self.neighbors.items():
+                    if neighbor_id not in self.next_door_model:
+                        continue
+
+                    # Calculate cost via this neighbor
+                    neighbor_table = self.next_door_model[neighbor_id]
+                    cost_via_neighbor = edge_cost + neighbor_table.get(dest_id, float('inf'))
+
+                    # Check if this path is better
+                    if cost_via_neighbor < best_cost:
+                        best_cost = cost_via_neighbor
+                        best_next_hop = neighbor_id
+
+                updated_table[dest_id] = best_cost
+                updated_next_hops[dest_id] = best_next_hop
+
+            # Update the routing table and next hop map
+            self.routing_table = updated_table
+            self.next_hop = updated_next_hops
 
         self.display_routing_table()
 
@@ -212,13 +234,18 @@ class Router:
     #             print(f"Error: Link between {server1_id} and {server2_id} does not exist.")
 
     def update(self, server1_id, server2_id, new_cost):
-        """Update the cost of a link between two servers and propagate the change."""
+        """Update the cost of a link between two servers."""
         with self.lock:
-            if server1_id in self.global_graph and server2_id in self.global_graph[server1_id]:
+            if server1_id == self.my_id or server2_id == self.my_id:
+                target_id = server2_id if server1_id == self.my_id else server1_id
                 self.global_graph[server1_id][server2_id] = new_cost
                 self.global_graph[server2_id][server1_id] = new_cost
+
+                # Update the next_door_model for the updated neighbor
+                if target_id in self.neighbors:
+                    self.next_door_model[target_id] = {self.my_id: new_cost}
+
                 print(f"Updated link cost between {server1_id} and {server2_id} to {new_cost}.")
-                self.recalculate_routes()  # Recalculate routes immediately
                 self.step()  # Notify neighbors of the update
             else:
                 print(f"Error: Link between {server1_id} and {server2_id} does not exist.")
