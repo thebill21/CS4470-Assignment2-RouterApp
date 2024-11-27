@@ -123,15 +123,26 @@ class Router:
         print(f"[DEBUG] Exiting mark_as_crashed for neighbor {neighbor_id}")
 
     def mark_as_reactivated(self, neighbor_id):
+        """Mark a previously crashed neighbor as reactivated and update routing table."""
         print(f"[DEBUG] Entering mark_as_reactivated for neighbor {neighbor_id}")
         with self.lock:
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
-                self.routing_table[neighbor_id] = self.get_initial_cost_to_neighbor(neighbor_id)
+                print(f"[DEBUG] Reactivating Neighbor {neighbor_id}.")
+                # Restore the link cost from the topology
+                initial_cost = self.get_initial_cost_to_neighbor(neighbor_id)
+                self.routing_table[neighbor_id] = initial_cost
                 self.next_hop[neighbor_id] = neighbor_id
                 self.neighbors.add(neighbor_id)
-                self.recalculate_routes()
-                self.step()
+                
+                # Log the restored cost
+                print(f"[DEBUG] Restored link cost to Neighbor {neighbor_id}: {initial_cost}")
+                
+                # Recalculate routes and propagate updates
+                # self.recalculate_routes()
+                # self.step()  # Notify neighbors about the updated routing table
+            else:
+                print(f"[DEBUG] Neighbor {neighbor_id} not found for reactivation.")
         print(f"[DEBUG] Exiting mark_as_reactivated for neighbor {neighbor_id}")
 
     def get_initial_cost_to_neighbor(self, neighbor_id):
