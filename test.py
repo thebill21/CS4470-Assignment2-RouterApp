@@ -60,7 +60,7 @@ class Router:
                                 # If neighbor was previously marked as offline, reactivate it
                                 if self.routing_table[neighbor_id] == float('inf'):
                                     print(f"Neighbor {neighbor_id} is back online. Marking as active.")
-                                    #self.routing_table[neighbor_id] = self.get_initial_cost_to_neighbor(neighbor_id)
+                                    self.routing_table[neighbor_id] = self.get_initial_cost_to_neighbor(neighbor_id)
                                     self.next_hop[neighbor_id] = neighbor_id
                                     #self.recalculate_routes()  # Update routing table after reactivation
                                 else:
@@ -78,9 +78,81 @@ class Router:
                                         self.routing_table[dest_id] = float('inf')
                                         self.next_hop[dest_id] = None
                                 #self.recalculate_routes()  # Update routing table after crash
+                self.recalculate_routes()  # Update routing table after crash
                 time.sleep(5)  # Check health every 5 seconds
 
         threading.Thread(target=health_check, daemon=True).start()
+
+    def recalculate_routes(self):
+        """Recalculate routing table using Bellman-Ford logic."""
+        print("[DEBUG] Entering recalculate_routes")
+        updated = False
+        with self.lock:
+            for dest_id in self.routing_table.keys():
+                if dest_id == self.my_id:
+                    continue  # Skip self
+
+                best_cost = float('inf')
+                best_next_hop = None
+
+                # Evaluate routes through all active neighbors
+                for neighbor_id in self.neighbors:
+                    cost_to_neighbor = self.routing_table.get(neighbor_id, float('inf'))
+                    neighbor_cost_to_dest = self.get_neighbor_cost_to_dest(neighbor_id, dest_id)
+
+                    if cost_to_neighbor == float('inf') or neighbor_cost_to_dest == float('inf'):
+                        continue
+
+                    total_cost = cost_to_neighbor + neighbor_cost_to_dest
+                    if total_cost < best_cost:
+                        best_cost = total_cost
+                        best_next_hop = neighbor_id
+
+                # Update routing table if a better route is found
+                if best_cost != self.routing_table[dest_id] or best_next_hop != self.next_hop.get(dest_id):
+                    print(f"[DEBUG] Updating route to {dest_id}: cost {self.routing_table[dest_id]} -> {best_cost}, next hop: {best_next_hop}")
+                    self.routing_table[dest_id] = best_cost
+                    self.next_hop[dest_id] = best_next_hop
+                    updated = True
+
+            if updated:
+                print("[DEBUG] Routing table updated after recalculation.")
+                self.display_routing_table()
+            else:
+                print("[DEBUG] No changes in routing table after recalculation.")
+
+        print("[DEBUG] Exiting recalculate_routes")
+
+    def get_neighbor_cost_to_dest(self, neighbor_id, dest_id):
+        """Retrieve the cost from a neighbor to a destination."""
+        print(f"[DEBUG] Entering get_neighbor_cost_to_dest for neighbor {neighbor_id} and destination {dest_id}")
+
+        # If the neighbor is not active, return infinity
+        if neighbor_id not in self.neighbors:
+            print(f"[DEBUG] Neighbor {neighbor_id} is not active. Returning infinity.")
+            return float('inf')
+
+        # Simulate getting the cost from the neighbor's routing table
+        # Assuming that the latest routing table from the neighbor has been processed and stored
+        # If the destination is not in the neighbor's routing table, return infinity
+        neighbor_cost_to_dest = self.routing_table.get(dest_id, float('inf'))
+
+        print(f"[DEBUG] Cost from neighbor {neighbor_id} to destination {dest_id}: {neighbor_cost_to_dest}")
+        print(f"[DEBUG] Exiting get_neighbor_cost_to_dest for neighbor {neighbor_id} and destination {dest_id}")
+        return neighbor_cost_to_dest
+
+    def get_initial_cost_to_neighbor(self, neighbor_id):
+        """Retrieve the initial cost to a neighbor from the topology."""
+        print(f"[DEBUG] Entering get_initial_cost_to_neighbor for neighbor {neighbor_id}")
+        for neighbor in self.nodes:
+            if neighbor.id == neighbor_id:
+                # Use the routing table to retrieve the initial cost
+                initial_cost = self.routing_table.get(neighbor_id, float('inf'))
+                print(f"[DEBUG] Initial cost to neighbor {neighbor_id}: {initial_cost}")
+                return initial_cost
+        print(f"[DEBUG] Neighbor {neighbor_id} not found in topology.")
+        print(f"[DEBUG] Exiting get_initial_cost_to_neighbor for neighbor {neighbor_id}")
+        return float('inf')
 
     def get_my_ip(self):
         """Get the machine's local IP address."""
