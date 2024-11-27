@@ -203,15 +203,37 @@ class Router:
         return None
 
     def display_routing_table(self):
-        """Displays the routing table."""
+        """Display the routing table with all possible next-hop options."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
-        for dest_id, cost in self.routing_table.items():
-            next_hop = self.next_hop.get(dest_id, None)
-            next_hop_str = next_hop if next_hop else "None"
-            cost_str = "infinity" if cost == float('inf') else cost
-            print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
+
+        # Gather all node IDs for consistent display
+        all_node_ids = sorted([node.id for node in self.nodes])
+
+        # Iterate through all destinations
+        for dest_id in all_node_ids:
+            # Iterate through all possible next hops
+            for next_hop_id in all_node_ids:
+                if dest_id == self.my_id:
+                    # Destination is the current router itself
+                    print(f"{dest_id:<14}{self.my_id:<14}0")
+                elif next_hop_id == self.my_id:
+                    # Skip the current router as a next hop for other destinations
+                    continue
+                else:
+                    # Get the cost of the route via this next hop
+                    if next_hop_id in self.next_hop and self.next_hop[next_hop_id] == next_hop_id:
+                        cost = self.routing_table.get(dest_id, float('inf'))
+                    else:
+                        cost = float('inf')
+
+                    # Format cost for display
+                    cost_str = cost if cost != float('inf') else "infinity"
+
+                    # Print the entry
+                    print(f"{dest_id:<14}{next_hop_id:<14}{cost_str}")
+        print()
 
     def run(self):
         """Runs the router and handles user commands."""
