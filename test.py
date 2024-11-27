@@ -3,8 +3,9 @@ import threading
 import time
 import json
 from collections import defaultdict
+from functools import total_ordering
 
-
+@total_ordering
 class Node:
     """Represents a node in the network."""
     def __init__(self, node_id, ip, port):
@@ -16,7 +17,10 @@ class Node:
         return hash((self.id, self.ip, self.port))
 
     def __eq__(self, other):
-        return (self.id, self.ip, self.port) == (other.id, other.ip)
+        return (self.id, self.ip, self.port) == (other.id, other.ip, other.port)
+
+    def __lt__(self, other):
+        return self.id < other.id
 
 
 class Router:
@@ -176,24 +180,41 @@ class Router:
 
     def process_message(self, message):
         """Process incoming routing table updates."""
-        self.number_of_packets_received += 1
-        sender_id = message["id"]
-        received_table = message["routing_table"]
-        updated = False
+        self.number_of_packets_received += 1  # Increment for each received packet
+        print(f"Processing message: {message}")
 
+        try:
+            sender_id = int(message.get("id"))  # Ensure sender_id is an integer
+            received_table = {int(k): float(v) for k, v in message.get("routing_table", {}).items()}  # Convert keys and values
+        except (ValueError, TypeError) as e:
+            print(f"Error processing message: {e}")
+            return
+
+        if sender_id is None or received_table is None:
+            print("Message missing required fields: 'id' or 'routing_table'.")
+            return
+
+        updated = False
         with self.lock:
-            for dest_id, cost in received_table.items():
+            for dest_id, received_cost in received_table.items():
                 if dest_id == self.my_id:
                     continue
-                new_cost = self.routing_table[sender_id] + cost
+
+                # Calculate new cost via sender
+                cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+                new_cost = cost_to_sender + received_cost
+
+                # Update only if new cost is better
                 if new_cost < self.routing_table.get(dest_id, float('inf')):
+                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id, float('inf'))} -> {new_cost}, next hop: {sender_id}")
                     self.routing_table[dest_id] = new_cost
                     self.next_hop[dest_id] = sender_id
                     updated = True
 
         if updated:
-            print("Routing table updated.")
+            print("Routing table updated based on received message.")
             self.display_routing_table()
+            self.step()  # Send updates to neighbors after a change
 
     def get_node_by_id(self, node_id):
         """Fetches a node by its ID."""
@@ -203,37 +224,24 @@ class Router:
         return None
 
     def display_routing_table(self):
-        """Display the routing table with all possible next-hop options."""
+        """Display the routing table with valid routes."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
 
-        # Gather all node IDs for consistent display
-        all_node_ids = sorted([node.id for node in self.nodes])
+        displayed = set()  # To avoid duplicates
 
-        # Iterate through all destinations
-        for dest_id in all_node_ids:
-            # Iterate through all possible next hops
-            for next_hop_id in all_node_ids:
-                if dest_id == self.my_id:
-                    # Destination is the current router itself
-                    print(f"{dest_id:<14}{self.my_id:<14}0")
-                elif next_hop_id == self.my_id:
-                    # Skip the current router as a next hop for other destinations
-                    continue
-                else:
-                    # Get the cost of the route via this next hop
-                    if next_hop_id in self.next_hop and self.next_hop[next_hop_id] == next_hop_id:
-                        cost = self.routing_table.get(dest_id, float('inf'))
-                    else:
-                        cost = float('inf')
+        for dest_id in sorted(self.routing_table.keys(), key=int):  # Sort by destination ID
+            if dest_id == self.my_id:
+                print(f"{dest_id:<14}{self.my_id:<14}0")
+                continue
 
-                    # Format cost for display
+            for neighbor in sorted(self.neighbors, key=lambda n: n.id):  # Sort neighbors by node ID
+                cost = self.routing_table.get(dest_id, float('inf'))
+                if neighbor.id == self.next_hop.get(dest_id, None) and (dest_id, neighbor.id) not in displayed:
                     cost_str = cost if cost != float('inf') else "infinity"
-
-                    # Print the entry
-                    print(f"{dest_id:<14}{next_hop_id:<14}{cost_str}")
-        print()
+                    print(f"{dest_id:<14}{neighbor.id:<14}{cost_str}")
+                    displayed.add((dest_id, neighbor.id))
 
     def run(self):
         """Runs the router and handles user commands."""
