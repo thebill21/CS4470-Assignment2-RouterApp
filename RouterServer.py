@@ -34,6 +34,7 @@ class Router:
         self.running = True
         self.lock = threading.Lock()
         self.number_of_packets_received = 0  # Correctly initialize it here
+        self.processed_updates = set()  # Set to track processed topology updates
 
         print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
@@ -97,6 +98,7 @@ class Router:
             num_servers = int(lines[0])
             num_neighbors = int(lines[1])
 
+            # Load nodes
             for i in range(2, 2 + num_servers):
                 parts = lines[i].split()
                 node = Node(int(parts[0]), parts[1], int(parts[2]))
@@ -111,12 +113,12 @@ class Router:
                     self.next_hop[node.id] = None
                 print(f"Loaded server {node.id}: IP={node.ip}, Port={node.port}")
 
+            # Load links
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
                 from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
-                self.topology[from_id][to_id] = cost  # Store in-memory topology
-                self.topology[to_id][from_id] = cost  # Ensure symmetry
-
+                self.topology[from_id][to_id] = cost
+                self.topology[to_id][from_id] = cost
                 if from_id == self.my_id:
                     self.neighbors[to_id] = cost
                     self.routing_table[to_id] = cost
@@ -126,6 +128,10 @@ class Router:
                     self.routing_table[from_id] = cost
                     self.next_hop[from_id] = from_id
                 print(f"Link loaded: {from_id} <-> {to_id} with cost {cost}")
+
+            # Apply Bellman-Ford algorithm after loading topology
+            print("Applying Bellman-Ford algorithm for initial routing table computation.")
+            self.recompute_routing_table()
 
             print("Topology loaded successfully.\n")
         except Exception as e:
@@ -218,71 +224,101 @@ class Router:
     #         self.step()  # Trigger routing updates to neighbors
 
     def process_message(self, message):
-        """Process incoming messages, including routing updates and link update commands."""
-        self.number_of_packets_received += 1  # Increment packet count for statistics
+        """Process incoming messages, including routing updates and topology updates."""
+        self.number_of_packets_received += 1  # Increment the packet count for statistics
 
+        # Handle topology update command
         if "command" in message:
-            # Handle specific commands, such as 'update'
-            if message["command"] == "update":
+            if message["command"] == "update_topology":
                 server1_id = int(message["server1_id"])
                 server2_id = int(message["server2_id"])
                 new_cost = float(message["new_cost"])
-                print(f"Received update command: Updating link {server1_id} <-> {server2_id} to cost {new_cost}.")
+                origin_id = message.get("origin_id", None)  # Originating router of the update
 
-                # Update the local topology
-                with self.lock:
-                    if server1_id == self.my_id or server2_id == self.my_id:
-                        neighbor_id = server2_id if server1_id == self.my_id else server1_id
-                        self.neighbors[neighbor_id] = new_cost
-                        self.routing_table[neighbor_id] = new_cost
-                        self.next_hop[neighbor_id] = neighbor_id
-                        print(f"Updated cost to neighbor {neighbor_id} to {new_cost}.")
+                print(f"[INFO] Received topology update command: {server1_id} <-> {server2_id} with cost {new_cost}.")
 
-                # Propagate the change to neighbors
-                self.step()
+                # Check if this update has already been processed
+                update_key = (server1_id, server2_id, new_cost)
+                if update_key in self.processed_updates:
+                    print(f"[INFO] Already processed update {update_key}. Skipping.")
+                    return
 
-                # Recompute routing table after topology update
-                self.recompute_routing_table()
+                # Mark the update as processed
+                self.processed_updates.add(update_key)
+
+                # Perform the same update command locally
+                print(f"[INFO] Performing local update: update {server2_id} <-> {server1_id} with cost {new_cost}")
+                self.update(server2_id, server1_id, new_cost)
+
                 return
 
-        # Process routing table updates from neighbors
-        sender_id = int(message.get("id"))  # Ensure the sender ID is an integer
-        received_table = {int(k): float(v) for k, v in message.get("routing_table", {}).items()}  # Convert keys and values
+        # Handle routing table updates
+        if "id" in message and "routing_table" in message:
+            sender_id = int(message["id"])  # Sender's ID
+            received_table = {
+                int(k): float(v) for k, v in message["routing_table"].items()
+            }  # Convert table keys/values to integers/floats
 
-        print(f"Processing routing update from Router {sender_id}. Received table: {received_table}")
+            print(f"[INFO] Received routing update from Router {sender_id}: {received_table}")
 
-        updated = False  # Track whether the routing table was updated
-        with self.lock:
-            for dest_id, received_cost in received_table.items():
-                if dest_id == self.my_id:
-                    continue  # Skip routes to self
+            updated = False
+            with self.lock:
+                for dest_id, received_cost in received_table.items():
+                    if dest_id == self.my_id:
+                        continue  # Skip routes to self
 
-                # Calculate new cost via the sender
-                cost_to_sender = self.routing_table.get(sender_id, float('inf'))
-                new_cost = cost_to_sender + received_cost
+                    # Calculate new cost through the sender
+                    cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+                    new_cost = cost_to_sender + received_cost
 
-                # Update only if the new cost is better
-                if new_cost < self.routing_table.get(dest_id, float('inf')):
-                    print(f"Updating route to {dest_id}: cost {self.routing_table.get(dest_id)} -> {new_cost}, next hop: {sender_id}")
-                    self.routing_table[dest_id] = new_cost
-                    self.next_hop[dest_id] = sender_id
-                    updated = True
+                    # Update if the new route is better
+                    if new_cost < self.routing_table.get(dest_id, float('inf')):
+                        print(f"[DEBUG] Updating route to {dest_id}: "
+                            f"cost {self.routing_table.get(dest_id)} -> {new_cost}, Next Hop={sender_id}")
+                        self.routing_table[dest_id] = new_cost
+                        self.next_hop[dest_id] = sender_id
+                        updated = True
 
-        if updated:
-            print("Routing table updated based on received message.")
-            self.display_routing_table()  # Display the updated routing table
-            self.step()  # Trigger routing updates to neighbors
+            if updated:
+                print("[INFO] Routing table updated based on received routing update.")
+                self.display_routing_table()
+                self.step()  # Propagate updated routing table to neighbors
+            return
+
+        # Handle unrecognized or unsupported commands
+        print("[ERROR] Unknown or unsupported command received. Ignoring message.")
+
+    def broadcast_topology_update(self, server1_id, server2_id, new_cost, origin_id):
+        """Broadcast topology update to all neighbors except the origin."""
+        update_message = {
+            "command": "update_topology",
+            "server1_id": server1_id,
+            "server2_id": server2_id,
+            "new_cost": new_cost,
+            "origin_id": origin_id or self.my_id  # Set origin_id if not provided
+        }
+        for neighbor_id in self.neighbors:
+            neighbor = self.get_node_by_id(neighbor_id)
+            if neighbor and neighbor_id != origin_id:  # Avoid sending back to the origin
+                print(f"Forwarding topology update to neighbor {neighbor.id}.")
+                self.send_message(neighbor, update_message)
 
     def step(self):
         """Send routing updates to neighbors."""
+        print("\n[STEP] Triggering routing updates to neighbors.")
         message = {
             "id": self.my_id,
             "routing_table": self.routing_table
         }
+
         for neighbor_id, cost in self.neighbors.items():
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
+                print(f"[STEP] Preparing to send routing table to neighbor {neighbor.id} at {neighbor.ip}:{neighbor.port}.")
                 self.send_message(neighbor, message)
+            else:
+                print(f"[STEP] Neighbor {neighbor_id} not found in node list. Skipping.")
+        print("[STEP] Routing updates broadcasted.\n")
 
     def send_message(self, neighbor, message):
         """Sends a message to a neighbor."""
@@ -328,46 +364,43 @@ class Router:
     #     self.step()
 
     def update(self, server1_id, server2_id, new_cost):
-        """Update a link cost bi-directionally and implement the five-step approach."""
-        print(f"Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
-        
-        # Step 1: Update the local in-memory topology.
+        """Update a link cost bi-directionally and broadcast to the entire network."""
+        print(f"[INFO] Received update command: Updating edge {server1_id} <-> {server2_id} with new cost {new_cost}.")
+
+        # Step 1: Update the local in-memory topology for both directions
         with self.lock:
             self.topology[server1_id][server2_id] = new_cost
             self.topology[server2_id][server1_id] = new_cost
-            print(f"Updated in-memory topology for edge {server1_id} <-> {server2_id} to cost {new_cost}.")
+            print(f"[DEBUG] Updated local in-memory topology: {dict(self.topology)}")
 
-        # Step 2: If this router is directly involved, update its local neighbor view.
+        # Step 2: If this router is directly involved, update its local neighbor view
         if server1_id == self.my_id or server2_id == self.my_id:
             neighbor_id = server2_id if server1_id == self.my_id else server1_id
             with self.lock:
                 self.neighbors[neighbor_id] = new_cost
                 self.routing_table[neighbor_id] = new_cost
                 self.next_hop[neighbor_id] = neighbor_id
-                print(f"Updated local link cost to neighbor {neighbor_id} to {new_cost}.")
+                print(f"[DEBUG] Updated local neighbor cost: {dict(self.neighbors)}")
         else:
-            print(f"This router is not directly connected to edge {server1_id} <-> {server2_id}.")
+            print(f"[INFO] This router is not directly connected to edge {server1_id} <-> {server2_id}.")
 
-        # Step 3: Broadcast the edge update to all neighbors.
+        # Step 3: Broadcast the edge update to all neighbors
         update_message = {
-            "command": "update_edge",
+            "command": "update_topology",
             "server1_id": server1_id,
             "server2_id": server2_id,
-            "new_cost": new_cost
+            "new_cost": new_cost,
+            "origin_id": self.my_id  # Include origin to prevent rebroadcasting loops
         }
         for neighbor_id in self.neighbors:
             neighbor = self.get_node_by_id(neighbor_id)
             if neighbor:
-                print(f"Broadcasting edge update to neighbor {neighbor.id}.")
+                print(f"[DEBUG] Broadcasting edge update to neighbor {neighbor.id}.")
                 self.send_message(neighbor, update_message)
 
-        # Step 4: Roll back the current routing table to the topology state.
-        print("Rolling back routing table to match updated topology.")
+        # Step 4: Recompute the routing table after applying the update
+        print("[INFO] Recomputing routing table after local topology update.")
         self.recompute_routing_table()
-
-        # Step 5: Apply the Bellman-Ford algorithm for route recalculation.
-        print("Applying Bellman-Ford algorithm to recalculate routes.")
-        self.step()  # Re-broadcast routing table updates.
 
     def apply_update(self, server1_id, server2_id, new_cost):
         """Apply the edge update and recompute routing table."""
@@ -388,10 +421,14 @@ class Router:
             self.recompute_routing_table()
 
     def recompute_routing_table(self):
-        """Recompute the routing table from scratch after a topology update."""
-        print("Recomputing routing table...")
+        """Recompute the routing table using Bellman-Ford algorithm."""
+        print("[INFO] Recomputing routing table...")
         with self.lock:
-            # Reset routing table entries
+            # Debug: Display the current topology being used
+            print(f"[DEBUG] Current topology: {dict(self.topology)}")
+
+            # Reset routing table
+            print(f"[DEBUG] Initializing routing table...")
             for node in self.nodes:
                 if node.id == self.my_id:
                     self.routing_table[node.id] = 0  # Cost to self is 0
@@ -402,11 +439,32 @@ class Router:
                 else:
                     self.routing_table[node.id] = float('inf')  # All others are unreachable
                     self.next_hop[node.id] = None
+            # Debug: Display the initialized routing table
+            self.display_routing_table()
 
-            # Reapply the Bellman-Ford algorithm
-            self.step()
+            # Start Bellman-Ford iterations
+            print("[DEBUG] Starting Bellman-Ford iteration...")
+            for _ in range(len(self.nodes) - 1):  # Perform |V| - 1 iterations
+                updated = False  # Track if any updates are made in this iteration
+                for from_id, neighbors in self.topology.items():
+                    for to_id, cost in neighbors.items():
+                        if self.routing_table[from_id] + cost < self.routing_table[to_id]:
+                            old_cost = self.routing_table[to_id]
+                            self.routing_table[to_id] = self.routing_table[from_id] + cost
+                            self.next_hop[to_id] = self.next_hop[from_id]
+                            updated = True
+                            # Debug: Log updates for the current iteration
+                            print(f"[DEBUG] Updated route: Destination={to_id}, Cost={old_cost} -> {self.routing_table[to_id]}, Next Hop={self.next_hop[to_id]}")
+                if not updated:
+                    # Debug: Log that no updates were made, so the algorithm terminates early
+                    print("[DEBUG] No updates in this iteration, stopping early.")
+                    break
 
-        print("Routing table recomputed.")
+            # Debug: Final routing table after Bellman-Ford
+            print("[INFO] Final routing table after Bellman-Ford:")
+            self.display_routing_table()
+
+        print("[INFO] Routing table recomputed.")
         self.display_routing_table()
 
     def display_routing_table(self):
@@ -424,13 +482,29 @@ class Router:
             command = input("Enter command: ").strip().split()
             if not command:
                 continue
-            if command[0] == "display":
+            
+            # Command parsing
+            cmd = command[0].lower()
+            if cmd == "display":
+                print("[COMMAND] Displaying routing table.")
                 self.display_routing_table()
-            elif command[0] == "update" and len(command) == 4:
-                self.update(int(command[1]), int(command[2]), int(command[3]))
-            elif command[0] == "crash":
-                print("Stopping router.")
+            elif cmd == "update" and len(command) == 4:
+                try:
+                    server1_id = int(command[1])
+                    server2_id = int(command[2])
+                    new_cost = int(command[3])
+                    print(f"[COMMAND] Updating edge {server1_id} <-> {server2_id} with cost {new_cost}.")
+                    self.update(server1_id, server2_id, new_cost)
+                except ValueError:
+                    print("[ERROR] Invalid input. Use: update <server1_id> <server2_id> <new_cost>")
+            elif cmd == "step":
+                print("[COMMAND] Manually triggering routing updates.")
+                self.step()
+            elif cmd == "crash":
+                print("[COMMAND] Stopping the router.")
                 self.running = False
+            else:
+                print("[ERROR] Unknown command. Available commands: display, update, step, crash.")
 
 
 if __name__ == "__main__":
