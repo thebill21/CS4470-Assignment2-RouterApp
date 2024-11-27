@@ -139,22 +139,27 @@ class Router:
     def recalculate_routes(self):
         """Recalculate the best routes using Bellman-Ford."""
         print("[DEBUG] Recalculating routes...")
-        distances, _ = self.bellman_ford(self.global_graph, self.my_id)
+        distances, predecessors = self.bellman_ford(self.global_graph, self.my_id)
         with self.lock:
             for dest_id, cost in distances.items():
                 self.routing_table[dest_id] = cost
+                self.next_hop[dest_id] = predecessors[dest_id] if predecessors[dest_id] is not None else dest_id
         self.display_routing_table()
 
     def bellman_ford(self, graph, source):
-        """Bellman-Ford algorithm to compute shortest paths."""
+        """Bellman-Ford algorithm to compute shortest paths and predecessors."""
         distances = {node: float('inf') for node in graph}
+        predecessors = {node: None for node in graph}
         distances[source] = 0
+
         for _ in range(len(graph) - 1):
             for u in graph:
                 for v in graph[u]:
                     if distances[u] + graph[u][v] < distances[v]:
                         distances[v] = distances[u] + graph[u][v]
-        return distances, None
+                        predecessors[v] = u
+
+        return distances, predecessors
 
     def step(self):
         """Send routing updates to neighbors."""
@@ -174,13 +179,14 @@ class Router:
                     print(f"Error sending updates to neighbor {neighbor_id}: {e}")
 
     def display_routing_table(self):
-        """Display the routing table."""
+        """Display the routing table with next hop."""
         print("\nRouting Table:")
-        print("Destination\tCost")
-        print("--------------------")
+        print("Destination\tNext Hop\tCost")
+        print("--------------------------------")
         for dest_id, cost in sorted(self.routing_table.items()):
+            next_hop = self.next_hop.get(dest_id, "None")
             cost_str = "infinity" if cost == float('inf') else cost
-            print(f"{dest_id:<14}{cost_str}")
+            print(f"{dest_id:<14}{next_hop:<14}{cost_str}")
         print()
 
 
