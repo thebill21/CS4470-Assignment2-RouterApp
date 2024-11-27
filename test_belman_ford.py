@@ -25,7 +25,7 @@ class Router:
         self.my_ip = self.get_my_ip()
         self.my_id = None
         self.my_node = None
-        self.nodes = []  # Initialize nodes list
+        self.nodes = []
         self.topology_file = topology_file
         self.update_interval = update_interval
         self.routing_table = {}
@@ -33,8 +33,7 @@ class Router:
         self.next_hop = {}
         self.running = True
         self.lock = threading.Lock()
-        self.number_of_packets_received = 0  # Initialize here
-        self.global_graph = defaultdict(dict)  # Initialize graph for Bellman-Ford
+        self.number_of_packets_received = 0
 
         print(f"Initializing router with topology file: {topology_file} and update interval: {update_interval}s.")
         self.load_topology()
@@ -43,7 +42,7 @@ class Router:
         print("Initialization complete.\n")
 
     def get_my_ip(self):
-        """Get the machine's local IP address."""
+        """Retrieve the machine's local IP address."""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("8.8.8.8", 80))
@@ -53,7 +52,7 @@ class Router:
             return "127.0.0.1"
 
     def load_topology(self):
-        """Reads the topology file and initializes routing tables."""
+        """Read topology file and initialize routing tables."""
         print(f"Loading topology from file: {self.topology_file}")
         try:
             with open(self.topology_file, 'r') as f:
@@ -69,16 +68,22 @@ class Router:
                     self.my_id = node.id
                     self.my_node = node
                     self.routing_table[node.id] = 0
+                    self.next_hop[node.id] = node.id
+                else:
+                    self.routing_table[node.id] = float('inf')
+                    self.next_hop[node.id] = None
 
             for i in range(2 + num_servers, 2 + num_servers + num_neighbors):
                 parts = lines[i].split()
-                from_id, to_id, cost = int(parts[0]), int(parts[1]), int(parts[2])
-                self.global_graph[from_id][to_id] = cost
-                self.global_graph[to_id][from_id] = cost
+                from_id, to_id, cost = int(parts[0]), int(parts[1]), float(parts[2])
                 if from_id == self.my_id:
                     self.neighbors[to_id] = cost
+                    self.routing_table[to_id] = cost
+                    self.next_hop[to_id] = to_id
                 elif to_id == self.my_id:
                     self.neighbors[from_id] = cost
+                    self.routing_table[from_id] = cost
+                    self.next_hop[from_id] = from_id
 
             print("Topology loaded successfully.\n")
         except Exception as e:
@@ -93,7 +98,7 @@ class Router:
                 server_socket.listen(5)
                 print(f"Listening on {self.my_ip}:{self.my_node.port}")
                 while self.running:
-                    client_socket, address = server_socket.accept()
+                    client_socket, _ = server_socket.accept()
                     threading.Thread(target=self.handle_client, args=(client_socket,)).start()
             except Exception as e:
                 print(f"Error in listening thread: {e}")
@@ -126,40 +131,24 @@ class Router:
         self.number_of_packets_received += 1
         sender_id = message['id']
         received_table = message['routing_table']
+        updated = False
 
         with self.lock:
-            # Update the global graph based on the received table
-            for dest_id, cost in received_table.items():
-                self.global_graph[sender_id][int(dest_id)] = float(cost)
-                self.global_graph[int(dest_id)][sender_id] = float(cost)
+            for dest_id, received_cost in received_table.items():
+                dest_id = int(dest_id)
+                received_cost = float(received_cost)
+                cost_to_sender = self.routing_table.get(sender_id, float('inf'))
+                new_cost = cost_to_sender + received_cost
 
-        # Recalculate routes using Bellman-Ford
-        self.recalculate_routes()
+                if new_cost < self.routing_table.get(dest_id, float('inf')):
+                    self.routing_table[dest_id] = new_cost
+                    self.next_hop[dest_id] = sender_id
+                    updated = True
 
-    def recalculate_routes(self):
-        """Recalculate the best routes using Bellman-Ford."""
-        print("[DEBUG] Recalculating routes...")
-        distances, predecessors = self.bellman_ford(self.global_graph, self.my_id)
-        with self.lock:
-            for dest_id, cost in distances.items():
-                self.routing_table[dest_id] = cost
-                self.next_hop[dest_id] = predecessors[dest_id] if predecessors[dest_id] is not None else dest_id
-        self.display_routing_table()
-
-    def bellman_ford(self, graph, source):
-        """Bellman-Ford algorithm to compute shortest paths and predecessors."""
-        distances = {node: float('inf') for node in graph}
-        predecessors = {node: None for node in graph}
-        distances[source] = 0
-
-        for _ in range(len(graph) - 1):
-            for u in graph:
-                for v in graph[u]:
-                    if distances[u] + graph[u][v] < distances[v]:
-                        distances[v] = distances[u] + graph[u][v]
-                        predecessors[v] = u
-
-        return distances, predecessors
+        if updated:
+            print("[DEBUG] Routing table updated based on received message.")
+            self.display_routing_table()
+            self.step()
 
     def step(self):
         """Send routing updates to neighbors."""
@@ -168,7 +157,7 @@ class Router:
             "id": self.my_id,
             "routing_table": self.routing_table
         }
-        for neighbor_id, cost in self.neighbors.items():
+        for neighbor_id in self.neighbors:
             neighbor = next((node for node in self.nodes if node.id == neighbor_id), None)
             if neighbor:
                 try:
@@ -179,16 +168,16 @@ class Router:
                     print(f"Error sending updates to neighbor {neighbor_id}: {e}")
 
     def display_routing_table(self):
-        """Display the routing table with next hop."""
+        """Display the routing table."""
         print("\nRouting Table:")
         print("Destination\tNext Hop\tCost")
         print("--------------------------------")
         for dest_id, cost in sorted(self.routing_table.items()):
-            next_hop = self.next_hop.get(dest_id, "None")
+            next_hop = self.next_hop.get(dest_id, None)
+            next_hop_str = next_hop if next_hop is not None else "None"
             cost_str = "infinity" if cost == float('inf') else cost
-            print(f"{dest_id:<14}{next_hop:<14}{cost_str}")
+            print(f"{dest_id:<14}{next_hop_str:<14}{cost_str}")
         print()
-
 
     def run(self):
         """Run the router command interface."""
@@ -226,21 +215,21 @@ class Router:
     def update(self, server1_id, server2_id, new_cost):
         """Update the cost of a link between two servers."""
         with self.lock:
-            if server1_id in self.global_graph and server2_id in self.global_graph[server1_id]:
-                self.global_graph[server1_id][server2_id] = new_cost
-                self.global_graph[server2_id][server1_id] = new_cost
+            if server1_id == self.my_id or server2_id == self.my_id:
+                target_id = server2_id if server1_id == self.my_id else server1_id
+                self.neighbors[target_id] = new_cost
+                self.routing_table[target_id] = new_cost
+                self.next_hop[target_id] = target_id
                 print(f"Updated link cost between {server1_id} and {server2_id} to {new_cost}.")
-                self.recalculate_routes()
-            else:
-                print(f"Error: Link between {server1_id} and {server2_id} does not exist.")
+                self.step()
 
     def crash(self):
-        """Simulate a crash by stopping the router."""
+        """Simulate a crash."""
         self.running = False
         print("Router has crashed and stopped all operations.")
 
     def exit_router(self):
-        """Exit the program gracefully by closing all threads."""
+        """Exit the router gracefully."""
         self.running = False
         print("Router is shutting down. Goodbye!")
 
@@ -248,7 +237,7 @@ class Router:
         """Display the number of packets received."""
         print(f"Number of packets received: {self.number_of_packets_received}")
 
-# Maintain the __main__ block for user commands.
+
 if __name__ == "__main__":
     print("********* Distance Vector Routing Protocol **********")
     print("Use: server -t <topology-file-name> -i <routing-update-interval>")
