@@ -432,8 +432,11 @@ class Router:
 
     def recompute_routing_table(self):
         """Recompute the routing table using Bellman-Ford algorithm."""
-        print("Recomputing routing table...")
+        print("[INFO] Recomputing routing table...")
         with self.lock:
+            # Debug: Display the current topology being used
+            print(f"[DEBUG] Current topology: {dict(self.topology)}")
+
             # Reset routing table
             for node in self.nodes:
                 if node.id == self.my_id:
@@ -447,14 +450,22 @@ class Router:
                     self.next_hop[node.id] = None
 
             # Bellman-Ford algorithm
-            for _ in range(len(self.nodes) - 1):  # Repeat |V|-1 times
+            print("[DEBUG] Starting Bellman-Ford iterations...")
+            for iteration in range(len(self.nodes) - 1):  # Repeat |V|-1 times
+                updated = False
                 for from_id, neighbors in self.topology.items():
                     for to_id, cost in neighbors.items():
                         if self.routing_table[from_id] + cost < self.routing_table[to_id]:
+                            print(f"[DEBUG] Iteration {iteration}: Updating route to {to_id} "
+                                f"via {from_id}: cost {self.routing_table[to_id]} -> {self.routing_table[from_id] + cost}")
                             self.routing_table[to_id] = self.routing_table[from_id] + cost
                             self.next_hop[to_id] = self.next_hop[from_id]
+                            updated = True
+                if not updated:
+                    print(f"[DEBUG] Iteration {iteration}: No further updates.")
+                    break  # Early exit if no updates in this iteration
 
-        print("Routing table recomputed.")
+        print("[INFO] Routing table recomputed.")
         self.display_routing_table()
 
     def display_routing_table(self):
